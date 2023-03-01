@@ -1,0 +1,14 @@
+pandas
+numpy
+matplotlib
+torch
+torchaudio
+torchvision
+tensorboard
+fire
+tqdm
+sklearn
+librosa
+nnAudio
+timm
+einops
