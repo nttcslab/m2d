@@ -173,11 +173,13 @@ class RuntimeM2D(nn.Module):
                     # prepend cls token to all frame features.
                     # in:
                     #   cls_token.shape -> [B, 1, D]
-                    #   emb.shape -> [B, T, F*D]
+                    #   emb.shape -> [B, T*F, D]
                     # out:
-                    #   emb.shape -> [B, T, (1 + F)*D]
-                    emb = torch.cat([cls_token.repeat(*([1]*(len(emb.shape) - 2)), emb.shape[-2], 1), emb], axis=-1)
+                    #   emb.shape -> [B, 1 + T*F, D]
+                    emb = torch.cat([cls_token, emb], axis=-1)
                 embeddings.append(emb)
+            x = torch.cat(embeddings, axis=-2)
+            # note: not cutting the padding at the end
         else:
             # stack embeddings along time frame
             for i in range(x.shape[-1] // unit_frames):
@@ -194,13 +196,13 @@ class RuntimeM2D(nn.Module):
                     #  cat([B, 1, D].repeat(1, T, 1), [B, T, F*D]) -> [B, T, (1 + F)*D]
                     emb = torch.cat([cls_token.repeat(*([1]*(len(emb.shape) - 2)), emb.shape[-2], 1), emb], axis=-1)
                 embeddings.append(emb)
-
-        x = torch.cat(embeddings, axis=-2)
-        pad_emb_frames = int(embeddings[0].shape[-2] * pad_frames / unit_frames)
-        # print(2, x.shape, embeddings[0].shape, pad_emb_frames)
-        if pad_emb_frames > 0:
-            x = x[..., :-pad_emb_frames, :] # remove padded tail
-        # print(3, x.shape)
+            # cut the padding at the end
+            x = torch.cat(embeddings, axis=-2)
+            pad_emb_frames = int(embeddings[0].shape[-2] * pad_frames / unit_frames)
+            # print(2, x.shape, embeddings[0].shape, pad_emb_frames)
+            if pad_emb_frames > 0:
+                x = x[..., :-pad_emb_frames, :] # remove padded tail
+            # print(3, x.shape)
         return x if len(emb.shape) == 3 else [x_ for x_ in x]
 
     def encode(self, batch_audio):
