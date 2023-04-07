@@ -322,7 +322,7 @@
                  loss_scaler.load_state_dict(checkpoint['scaler'])
              print("With optim & sched!")
 --- _org/m2d/engine_pretrain_m2d.py	2023-02-02 16:21:59.293250852 +0900
-+++ m2d/engine_pretrain_m2d.py	2023-02-02 15:36:48.145146487 +0900
++++ m2d/engine_pretrain_m2d.py	2023-04-07 09:51:35.536253903 +0900
 @@ -20,6 +20,83 @@
  
  def train_one_epoch(model: torch.nn.Module,
@@ -416,6 +416,15 @@
  
          # we use a per iteration (instead of per epoch) lr scheduler
          if data_iter_step % accum_iter == 0:
+@@ -53,7 +130,7 @@
+             print("Loss is {}, stopping training".format(loss_value))
+             sys.exit(1)
+ 
+-        loss /= accum_iter
++        loss = loss / accum_iter
+         loss_scaler(loss, optimizer, parameters=model.parameters(),
+                     update_grad=(data_iter_step + 1) % accum_iter == 0)
+         if (data_iter_step + 1) % accum_iter == 0:
 @@ -79,4 +156,4 @@
      # gather the stats from all processes
      metric_logger.synchronize_between_processes()
