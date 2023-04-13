@@ -1077,7 +1077,7 @@
      if cls_token:
          pos_embed = np.concatenate([np.zeros([1, embed_dim]), pos_embed], axis=0)
 --- _org/mae_train_audio.py	2023-02-02 16:21:59.261250928 +0900
-+++ mae_train_audio.py	2023-02-02 18:17:51.054896628 +0900
++++ mae_train_audio.py	2023-04-10 09:00:26.165007489 +0900
 @@ -15,40 +15,45 @@
  import os
  import time
@@ -1179,7 +1179,7 @@
 +    if (ds is None) or (len(ds) == 0):
 +        print(f'(Skipped visualization which require samples in {args.data_path}/vis_samples folder.)')
 +        return
-+    batch = torch.stack([ds[i][0] for i in range(len(ds))])
++    batch = torch.stack([ds[i] for i in range(len(ds))])
 +    model.eval()
 +    with torch.no_grad():
 +        _, recons, _, masks = model.forward_viz(batch.to(device))
@@ -1224,7 +1224,7 @@
  
      data_loader_train = torch.utils.data.DataLoader(
          dataset_train, sampler=sampler_train,
-@@ -153,7 +183,8 @@
+@@ -153,12 +183,13 @@
      )
      
      # define the model
@@ -1234,6 +1234,12 @@
  
      model.to(device)
  
+     model_without_ddp = model
+-    print("Model = %s" % str(model_without_ddp))
++    print("Model = %s" % common.short_model_desc(model_without_ddp))
+ 
+     eff_batch_size = args.batch_size * args.accum_iter * misc.get_world_size()
+     
 @@ -176,7 +207,7 @@
          model_without_ddp = model.module
      
@@ -1256,7 +1262,7 @@
              args=args
          )
 -        if args.output_dir and (epoch % 20 == 0 or epoch + 1 == args.epochs):
-+        if args.output_dir and (epoch1 % args.save_freq == 0 or epoch1 == args.epochs):
++        if args.output_dir and misc.is_main_process() and (epoch1 % args.save_freq == 0 or epoch1 == args.epochs):
              misc.save_model(
                  args=args, model=model, model_without_ddp=model_without_ddp, optimizer=optimizer,
 -                loss_scaler=loss_scaler, epoch=epoch)
