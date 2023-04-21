@@ -40,7 +40,6 @@ class Config:
 
 
 def parse_sizes_by_name(name):
-    print(name)
     model_cls = name.split('-')[0]
     params = name.split('-')[1]
     input_str, patch_str = params.split('p')[:2]
@@ -57,6 +56,7 @@ def get_model(args, weight_file):
         checkpoint = None
         dec_blocks_nums = [4 - 1] # fixed for random init.
         print(' **CAUTION: Random Weights**')
+        logging.info(' **CAUTION: Random Weights**')
     else:
         checkpoint = torch.load(weight_file, map_location='cpu')
         checkpoint = checkpoint['model'] if 'model' in checkpoint else checkpoint
@@ -92,9 +92,9 @@ def get_to_melspec(cfg):
         power=2,
         verbose=False,
     )
-    print(f'Runtime MelSpectrogram({cfg.sample_rate}, {cfg.n_fft}, {cfg.window_size}, {cfg.hop_size}, '
-        + f'{cfg.n_mels}, {cfg.f_min}, {cfg.f_max}):')
-    print(to_spec)
+    logging.info(f'Runtime MelSpectrogram({cfg.sample_rate}, {cfg.n_fft}, {cfg.window_size}, {cfg.hop_size}, '
+                 + f'{cfg.n_mels}, {cfg.f_min}, {cfg.f_max}):')
+    logging.info(to_spec)
     return to_spec
 
 
@@ -230,7 +230,7 @@ class RuntimeM2D(nn.Module):
         """
         x = self.encode(audio)
         ts = get_timestamps(self.cfg, audio, x)
-        print(audio.shape, x.shape, ts.shape)
+        # print(audio.shape, x.shape, ts.shape)
         return x, ts
 
     def reconstruct(self, lms, mask_ratio, start_frame=0):

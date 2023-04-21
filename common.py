@@ -3,6 +3,7 @@
 import datetime
 import hashlib
 import sys
+import re
 
 
 class PrintLogger(object):
@@ -44,7 +45,7 @@ def prmstr_zz(prm):
 
 
 def arg_conf_str(args, defaults={
-    'dataset': ('data/files_audioset.csv', 'D', 'head_'),
+    'dataset': ('data/files_audioset.csv', 'D', 'path'),
     'ema_decay_init': (0.99995, 'ema', 'z'),
     'ema_decay': (0.99999, 'ed', 'z'),
     'decoder_depth': (8, 'dd', 'asis'),
@@ -75,5 +76,7 @@ def arg_conf_str(args, defaults={
             value = value[:1]
         elif value_format == 'head_':
             value = ''.join([v[:1] for v in value.split('_')])
+        elif value_format == 'path':
+            value = ''.join([v[:1] for v in re.split(r'_|/', value)])
         confstr += arg_key + value
     return confstr
