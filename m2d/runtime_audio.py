@@ -27,6 +27,7 @@ class Config:
     patch_size = [16, 16]
     cls_token = False
     training_mask = 0.0
+    flat_features = False
 
     # FFT parameters.
     sample_rate = 16000
@@ -68,7 +69,8 @@ def get_model(args, weight_file):
     model = models_mae.__dict__[args.model](img_size=args.input_size, patch_size=args.patch_size, decoder_depth=args.decoder_depth)
 
     # set feature_d
-    n_stack_feature = 1 if args.training_mask > 0 else (args.input_size[0] // args.patch_size[0])
+    args.flat_features = True if args.training_mask > 0.0 else args.flat_features
+    n_stack_feature = 1 if args.flat_features else (args.input_size[0] // args.patch_size[0])
     d = model.pos_embed.shape[-1]
     args.feature_d = d * n_stack_feature
     # load weights
@@ -124,6 +126,7 @@ class RuntimeM2D(nn.Module):
         logging.info(f'Using weights: {cfg.weight_file}')
         logging.info(f'[CLS] token?: {cfg.cls_token}')
         logging.info(f'training_mask: {cfg.training_mask}')
+        logging.info(f'flat_features: {cfg.flat_features}')
 
         self.to_spec = get_to_melspec(cfg)
 
@@ -165,7 +168,7 @@ class RuntimeM2D(nn.Module):
             x = torch.nn.functional.pad(x, (0, pad_frames))
 
         embeddings = []
-        if self.is_training_mask():
+        if self.cfg.flat_features:
             # flatten all patch embeddings
             mask_ratio = self.cfg.training_mask if self.training else 0.0
             for i in range(x.shape[-1] // unit_frames):
@@ -181,7 +184,7 @@ class RuntimeM2D(nn.Module):
                     emb = torch.cat([cls_token, emb], axis=-1)
                 embeddings.append(emb)
             x = torch.cat(embeddings, axis=-2)
-            # note: not cutting the padding at the end
+            # note: we are not removing the padding frames.
         else:
             # stack embeddings along time frame
             for i in range(x.shape[-1] // unit_frames):
