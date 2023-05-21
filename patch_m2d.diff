@@ -433,8 +433,8 @@
 \ No newline at end of file
 +    return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
 --- _org/m2d/models_mae.py	2023-02-02 16:21:59.333250758 +0900
-+++ m2d/models_mae.py	2023-02-02 18:10:10.960025753 +0900
-@@ -9,14 +9,58 @@
++++ m2d/models_mae.py	2023-05-21 21:31:04.180053808 +0900
+@@ -9,14 +9,59 @@
  # DeiT: https://github.com/facebookresearch/deit
  # --------------------------------------------------------
  
@@ -447,6 +447,7 @@
  import torch.nn as nn
 +import numpy as np
  
++import timm
  from timm.models.vision_transformer import PatchEmbed, Block
  
 -from util.pos_embed import get_2d_sincos_pos_embed
@@ -494,7 +495,7 @@
  
  
  class MaskedAutoencoderViT(nn.Module):
-@@ -27,6 +71,8 @@
+@@ -27,6 +72,8 @@
                   decoder_embed_dim=512, decoder_depth=8, decoder_num_heads=16,
                   mlp_ratio=4., norm_layer=nn.LayerNorm, norm_pix_loss=False):
          super().__init__()
@@ -503,7 +504,7 @@
  
          # --------------------------------------------------------------------------
          # MAE encoder specifics
-@@ -37,7 +83,7 @@
+@@ -37,7 +84,7 @@
          self.pos_embed = nn.Parameter(torch.zeros(1, num_patches + 1, embed_dim), requires_grad=False)  # fixed sin-cos embedding
  
          self.blocks = nn.ModuleList([
@@ -512,7 +513,7 @@
              for i in range(depth)])
          self.norm = norm_layer(embed_dim)
          # --------------------------------------------------------------------------
-@@ -51,24 +97,50 @@
+@@ -51,24 +98,50 @@
          self.decoder_pos_embed = nn.Parameter(torch.zeros(1, num_patches + 1, decoder_embed_dim), requires_grad=False)  # fixed sin-cos embedding
  
          self.decoder_blocks = nn.ModuleList([
@@ -567,7 +568,7 @@
          self.decoder_pos_embed.data.copy_(torch.from_numpy(decoder_pos_embed).float().unsqueeze(0))
  
          # initialize patch_embed like nn.Linear (instead of nn.Conv2d)
-@@ -94,30 +166,28 @@
+@@ -94,30 +167,28 @@
  
      def patchify(self, imgs):
          """
@@ -610,7 +611,7 @@
          return imgs
  
      def random_masking(self, x, mask_ratio):
-@@ -127,13 +197,29 @@
+@@ -127,13 +198,29 @@
          x: [N, L, D], sequence
          """
          N, L, D = x.shape  # batch, length, dim
@@ -647,7 +648,7 @@
  
          # keep the first subset
          ids_keep = ids_shuffle[:, :len_keep]
-@@ -147,7 +233,7 @@
+@@ -147,7 +234,7 @@
  
          return x_masked, mask, ids_restore
  
@@ -656,7 +657,7 @@
          # embed patches
          x = self.patch_embed(x)
  
-@@ -163,12 +249,31 @@
+@@ -163,12 +250,31 @@
          x = torch.cat((cls_tokens, x), dim=1)
  
          # apply Transformer blocks
@@ -688,7 +689,7 @@
      def forward_decoder(self, x, ids_restore):
          # embed tokens
          x = self.decoder_embed(x)
-@@ -197,8 +302,8 @@
+@@ -197,8 +303,8 @@
  
      def forward_loss(self, imgs, pred, mask):
          """
@@ -699,7 +700,7 @@
          mask: [N, L], 0 is keep, 1 is remove, 
          """
          target = self.patchify(imgs)
-@@ -208,6 +313,9 @@
+@@ -208,6 +314,9 @@
              target = (target - mean) / (var + 1.e-6)**.5
  
          loss = (pred - target) ** 2
@@ -709,7 +710,7 @@
          loss = loss.mean(dim=-1)  # [N, L], mean loss per patch
  
          loss = (loss * mask).sum() / mask.sum()  # mean loss on removed patches
-@@ -219,6 +327,17 @@
+@@ -219,6 +328,17 @@
          loss = self.forward_loss(imgs, pred, mask)
          return loss, pred, mask
  
@@ -727,7 +728,7 @@
  
  def mae_vit_base_patch16_dec512d8b(**kwargs):
      model = MaskedAutoencoderViT(
-@@ -248,3 +367,329 @@
+@@ -248,3 +368,433 @@
  mae_vit_base_patch16 = mae_vit_base_patch16_dec512d8b  # decoder: 512 dim, 8 blocks
  mae_vit_large_patch16 = mae_vit_large_patch16_dec512d8b  # decoder: 512 dim, 8 blocks
  mae_vit_huge_patch14 = mae_vit_huge_patch14_dec512d8b  # decoder: 512 dim, 8 blocks
@@ -1057,6 +1058,110 @@
 +
 +
 +m2d_d2v_vit_base_patch16 = m2d_d2v_vit_base_patch16_dec512d8b  # for image
++
++
++class M2DEncoderViT(timm.models.vision_transformer.VisionTransformer):
++    """ Vision Transformer with support for global average pooling
++    """
++    def __init__(self, **kwargs):
++        super().__init__(**kwargs)
++        del self.head  # not using `head` for M2D encoder only ViT
++
++    def grid_size(self):
++        # This fails with timm 0.4.5 -> return self.patch_embed.grid_size
++        # Workaround for avoid compatibility issue
++        img_size = np.array(self.patch_embed.img_size)
++        patch_size = np.array(self.patch_embed.patch_size)
++        grid_size = img_size // patch_size
++        return grid_size
++
++    def random_masking(self, x, mask_ratio):
++        """
++        Perform per-sample random masking by per-sample shuffling.
++        Per-sample shuffling is done by argsort random noise.
++        x: [N, L, D], sequence
++        """
++        N, L, D = x.shape  # batch, length, dim
++
++        if isinstance(mask_ratio, (torch.Tensor, np.ndarray)):
++            # Prefixed mask. `mask` shall be 2x sized.
++            mask = mask_ratio.clone().detach()
++            #ids_shuffle = torch.where(mask.reshape(N, -1) == 0)[1].reshape(N, -1)
++            ids_shuffle = torch.argsort(mask.reshape(N, -1), dim=1)
++            ids_restore = torch.argsort(ids_shuffle, dim=1)
++            len_keep = (mask[0] == 0).sum() // 2
++        elif isinstance(mask_ratio, (list, tuple)):
++            # Prefixed ids_restore & len_keep.
++            ids_restore = mask_ratio[0]
++            ids_shuffle = torch.argsort(ids_restore, dim=1)
++            len_keep = mask_ratio[1]
++        elif mask_ratio == 0:
++            # No mask
++            mask = torch.zeros([N, L], device=x.device)
++            ids_restore = torch.tensor(list(range(L))).to(torch.int)
++            return x, None, mask, ids_restore
++        else:
++            # Random mask
++            HorF, WorT = self.grid_size()
++            ids_shuffle, len_keep = self._random_mask_fn((N, HorF, WorT), mask_ratio, x.device)
++            ids_restore = torch.argsort(ids_shuffle, dim=1)
++
++        # keep the visible patch indexes
++        ids_keep = ids_shuffle[:, :len_keep]
++        x_masked = torch.gather(x, dim=1, index=ids_keep.unsqueeze(-1).repeat(1, 1, D))
++
++        # keep the rest
++        ids_keep = ids_shuffle[:, len_keep:]
++        x_masked2 = torch.gather(x, dim=1, index=ids_keep.unsqueeze(-1).repeat(1, 1, D))
++
++        # generate the binary mask: 0 is keep, 1 is remove
++        mask = torch.ones([N, L], device=x.device)
++        mask[:, :len_keep] = 0
++        # unshuffle to get the binary mask
++        mask = torch.gather(mask, dim=1, index=ids_restore)
++
++        return x_masked, x_masked2, mask, ids_restore
++
++    def forward_encoder(self, x, mask_ratio, return_layers=False, blocks=None, norm=None):
++        blocks, norm = blocks or self.blocks, norm or self.norm
++
++        # embed patches
++        x = self.patch_embed(x)
++
++        # add pos embed w/o cls token
++        x = x + self.pos_embed[:, 1:, :]
++
++        # masking: length -> length * mask_ratio; TODO fix comment
++        x, x_targ, mask, ids_restore = self.random_masking(x, mask_ratio)
++
++        # append cls token
++        cls_token = self.cls_token + self.pos_embed[:, :1, :]
++        cls_tokens = cls_token.expand(x.shape[0], -1, -1)
++        x = torch.cat((cls_tokens, x), dim=1)
++
++        # apply Transformer blocks
++        layers = []
++        for blk in blocks:
++            x = blk(x)
++            if return_layers: layers.append(x)
++        x = norm(x)
++        if return_layers:
++            layers.pop() # replace the last feature with the normalized one.
++            layers.append(x)
++
++        if return_layers:
++            return torch.stack(layers), x_targ, mask, ids_restore
++        return x, x_targ, mask, ids_restore
++
++
++def m2d_vit_base_encoder_only(patch_size=16, decoder_depth=8, in_chans=1, **kwargs):  # for audio, encoder only
++    model = M2DEncoderViT(
++        in_chans=in_chans, patch_size=patch_size, embed_dim=768, depth=12, num_heads=12,
++        mlp_ratio=4, norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
++    return model
++
++
++msm_mae_vit_base_encoder_only = m2d_vit_base_encoder_only
 --- _org/m2d/pos_embed.py	2023-02-02 16:21:59.205251061 +0900
 +++ m2d/pos_embed.py	2023-01-11 18:44:47.622966963 +0900
 @@ -23,12 +23,13 @@

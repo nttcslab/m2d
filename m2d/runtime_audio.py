@@ -49,10 +49,21 @@ def parse_sizes_by_name(name):
     return input_size, patch_size, model_cls
 
 
-def get_model(args, weight_file):
+def drop_non_encoder_weights(checkpoint):
+    new_ckpt = {}
+    for k in checkpoint:
+        if k.startswith('decoder'): continue
+        if k.startswith('target'): continue
+        if k == 'mask_token': continue
+        new_ckpt[k] = checkpoint[k]
+    return new_ckpt
+
+def get_model(args, weight_file, encoder_only):
     # determine model parameters for creation
     folder_name = Path(weight_file).parent.name
     args.input_size, args.patch_size, args.model = parse_sizes_by_name(folder_name)
+    if encoder_only:
+        args.model = args.model + '_encoder_only'
     if Path(weight_file).name.endswith('random'):
         checkpoint = None
         dec_blocks_nums = [4 - 1] # fixed for random init.
@@ -75,6 +86,8 @@ def get_model(args, weight_file):
     args.feature_d = d * n_stack_feature
     # load weights
     if checkpoint:
+        if 'encoder_only' in args.model:
+            checkpoint = drop_non_encoder_weights(checkpoint)
         model.load_state_dict(checkpoint)
 
     model.eval()
@@ -111,12 +124,12 @@ def get_timestamps(cfg, batch_audio, x):  # Returns timestamps in milliseconds.
 
 
 class RuntimeM2D(nn.Module):
-    def __init__(self, cfg=Config(), weight_file=None, training_mask=0.0):
+    def __init__(self, cfg=Config(), weight_file=None, training_mask=0.0, encoder_only=True):
         super().__init__()
         cfg.weight_file = weight_file or cfg.weight_file
         cfg.training_mask = training_mask if training_mask > 0.0 else cfg.training_mask
         self.cfg = cfg
-        self.backbone = get_model(cfg, cfg.weight_file)
+        self.backbone = get_model(cfg, cfg.weight_file, encoder_only)
         # runtime masking -> structured mask for audio
         if self.is_training_mask():
             self.backbone.set_random_structured_mask()
