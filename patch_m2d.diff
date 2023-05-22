@@ -433,7 +433,7 @@
 \ No newline at end of file
 +    return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
 --- _org/m2d/models_mae.py	2023-02-02 16:21:59.333250758 +0900
-+++ m2d/models_mae.py	2023-05-21 21:31:04.180053808 +0900
++++ m2d/models_mae.py	2023-05-22 08:57:53.519467357 +0900
 @@ -9,14 +9,59 @@
  # DeiT: https://github.com/facebookresearch/deit
  # --------------------------------------------------------
@@ -728,7 +728,7 @@
  
  def mae_vit_base_patch16_dec512d8b(**kwargs):
      model = MaskedAutoencoderViT(
-@@ -248,3 +368,433 @@
+@@ -248,3 +368,437 @@
  mae_vit_base_patch16 = mae_vit_base_patch16_dec512d8b  # decoder: 512 dim, 8 blocks
  mae_vit_large_patch16 = mae_vit_large_patch16_dec512d8b  # decoder: 512 dim, 8 blocks
  mae_vit_huge_patch14 = mae_vit_huge_patch14_dec512d8b  # decoder: 512 dim, 8 blocks
@@ -1074,6 +1074,10 @@
 +        patch_size = np.array(self.patch_embed.patch_size)
 +        grid_size = img_size // patch_size
 +        return grid_size
++
++    def set_random_structured_mask(self):
++        print('using random_structured_mask().')
++        self._random_mask_fn = random_structured_mask
 +
 +    def random_masking(self, x, mask_ratio):
 +        """
