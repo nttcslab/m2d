@@ -1,5 +1,5 @@
 --- _org/train_audio.py	2023-02-02 16:21:59.229251004 +0900
-+++ train_audio.py	2023-02-02 16:49:51.196747559 +0900
++++ train_audio.py	2023-05-26 07:29:29.701280283 +0900
 @@ -1,3 +1,5 @@
 +# Masked Modeling Duo (M2D) pre-training
 +
@@ -149,7 +149,7 @@
 +    if (ds is None) or (len(ds) == 0):
 +        print(f'--Skipped visualization (No samples in {args.data_path}/vis_samples folder.)')
 +        return
-+    batch = torch.stack([ds[i][0] for i in range(len(ds))])
++    batch = torch.stack([ds[i] for i in range(len(ds))])
 +    model.eval()
 +    with torch.no_grad():
 +        recons, _, masks = model.forward_viz(batch.to(device))
@@ -433,7 +433,7 @@
 \ No newline at end of file
 +    return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
 --- _org/m2d/models_mae.py	2023-02-02 16:21:59.333250758 +0900
-+++ m2d/models_mae.py	2023-05-22 08:57:53.519467357 +0900
++++ m2d/models_mae.py	2023-05-26 07:31:31.024748818 +0900
 @@ -9,14 +9,59 @@
  # DeiT: https://github.com/facebookresearch/deit
  # --------------------------------------------------------
@@ -728,7 +728,7 @@
  
  def mae_vit_base_patch16_dec512d8b(**kwargs):
      model = MaskedAutoencoderViT(
-@@ -248,3 +368,437 @@
+@@ -248,3 +368,442 @@
  mae_vit_base_patch16 = mae_vit_base_patch16_dec512d8b  # decoder: 512 dim, 8 blocks
  mae_vit_large_patch16 = mae_vit_large_patch16_dec512d8b  # decoder: 512 dim, 8 blocks
  mae_vit_huge_patch14 = mae_vit_huge_patch14_dec512d8b  # decoder: 512 dim, 8 blocks
@@ -1065,7 +1065,12 @@
 +    """
 +    def __init__(self, **kwargs):
 +        super().__init__(**kwargs)
-+        del self.head  # not using `head` for M2D encoder only ViT
++        # Our positional encoding is constant
++        pos_embed = get_2d_sincos_pos_embed(self.pos_embed.shape[-1], self.grid_size(), cls_token=True)
++        self.pos_embed.data.copy_(torch.from_numpy(pos_embed).float().unsqueeze(0))
++        self.pos_embed.requires_grad_(False)
++        # We do not use `head` for the M2D encoder only ViT
++        del self.head
 +
 +    def grid_size(self):
 +        # This fails with timm 0.4.5 -> return self.patch_embed.grid_size

@@ -49,13 +49,15 @@ def parse_sizes_by_name(name):
     return input_size, patch_size, model_cls
 
 
-def drop_non_encoder_weights(checkpoint):
+def drop_non_model_weights(model, checkpoint, filename):
+    model_keys = [n for n, p in model.named_parameters()]
     new_ckpt = {}
     for k in checkpoint:
-        if k.startswith('decoder'): continue
-        if k.startswith('target'): continue
-        if k == 'mask_token': continue
+        if k not in model_keys: continue
         new_ckpt[k] = checkpoint[k]
+    n_org = len(checkpoint.keys())
+    n_cur = len(new_ckpt.keys())
+    print(f' using {n_cur} parameters, while dropped {n_org - n_cur} from {n_org} parameters in {Path(filename).parent/Path(filename).name}')
     return new_ckpt
 
 def get_model(args, weight_file, encoder_only):
@@ -86,8 +88,7 @@ def get_model(args, weight_file, encoder_only):
     args.feature_d = d * n_stack_feature
     # load weights
     if checkpoint:
-        if 'encoder_only' in args.model:
-            checkpoint = drop_non_encoder_weights(checkpoint)
+        checkpoint = drop_non_model_weights(model, checkpoint, weight_file)
         model.load_state_dict(checkpoint)
 
     model.eval()
@@ -124,7 +125,7 @@ def get_timestamps(cfg, batch_audio, x):  # Returns timestamps in milliseconds.
 
 
 class RuntimeM2D(nn.Module):
-    def __init__(self, cfg=Config(), weight_file=None, training_mask=0.0, encoder_only=True):
+    def __init__(self, cfg=Config(), weight_file=None, training_mask=0.0, encoder_only=False):
         super().__init__()
         cfg.weight_file = weight_file or cfg.weight_file
         cfg.training_mask = training_mask if training_mask > 0.0 else cfg.training_mask
