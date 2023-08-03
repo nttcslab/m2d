@@ -11,7 +11,7 @@ import sys
 sys.path.append('..')
 from evar.ar_base import BaseAudioRepr, calculate_norm_stats, normalize_spectrogram
 import torch
-from m2d.runtime_audio import RuntimeM2D, RuntimeM2DwithDuration
+from m2d.runtime_audio import RuntimeM2D
 
 
 class AR_M2D_BatchNormStats(BaseAudioRepr):

@@ -150,9 +150,10 @@ It supports the following downstream tasks: ESC-50, US8K, FSD50K, SPCV1/V2, VoxF
 
 The following steps setup EVAR.
 
-1. Clone EVAR repository and prepare basic items.
+1. In the folder of your copy of the M2D repository, clone the EVAR repository and prepare basic items.
 
     ```sh
+    (cd to your M2D folder)
     git clone https://github.com/nttcslab/eval-audio-repr.git evar
     cd evar
     curl https://raw.githubusercontent.com/daisukelab/general-learning/master/MLP/torch_mlp_clf2.py -o evar/utils/torch_mlp_clf2.py
@@ -161,18 +162,7 @@ The following steps setup EVAR.
     cd ..
     ```
 
-2. Add the M2D wrapper and configuration files to the cloned `evar` folder.
-
-    ```sh
-    ln -s ../../for_evar/ar_m2d.py evar/evar
-    ln -s ../../for_evar/m2d.yaml evar/config
-    cd evar
-    sed -e 'N;s/\(import evar\.ar_ast\)/\1\nimport evar\.ar_m2d/' -i lineareval.py
-    sed -e 'N;s/\(from lineareval import make_cfg\)/\1\nimport evar\.ar_m2d/' -i finetune.py
-    cd ..
-    ```
-
-3. Setup downstream task datasets according to [Preparing-datasets.md](https://github.com/nttcslab/eval-audio-repr/blob/main/Preparing-datasets.md). The following is an example for setting up CREMA-D dataset.
+2. Setup downstream task datasets according to [Preparing-datasets.md](https://github.com/nttcslab/eval-audio-repr/blob/main/Preparing-datasets.md). The following is an example for setting up CREMA-D dataset.
 
     ```sh
     cd evar

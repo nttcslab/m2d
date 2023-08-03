@@ -10,7 +10,7 @@ tqdm
 scikit-learn
 librosa
 nnAudio
-timm
+timm==0.4.5
 transformers
 einops
 easydict
