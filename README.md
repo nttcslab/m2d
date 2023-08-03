@@ -2,7 +2,12 @@
 
 # Masked Modeling Duo (M2D)
 
-This is a demo implementation of "[Masked Modeling Duo: Learning Representations by Encouraging Both Networks to Model the Input](https://arxiv.org/abs/2210.14648)," which includes:
+This repository provides demo implementations of the following papers:
+
+- "[Masked Modeling Duo: Learning Representations by Encouraging Both Networks to Model the Input](https://arxiv.org/abs/2210.14648)"
+- "[Masked Modeling Duo for Speech: Specializing General-Purpose Audio Representation to Speech using Denoising Distillation](https://arxiv.org/abs/2305.14079)"
+
+You can find the following.
 
 - Code for pre-training, linear evaluation, and fine-tuning.
 - Pre-trained weights.
@@ -10,14 +15,27 @@ This is a demo implementation of "[Masked Modeling Duo: Learning Representations
 If you find our M2D useful in your research, please consider citing our paper:
 
 ```BibTeX
-@article{niizumi2023m2d,
+@INPROCEEDINGS{niizumi2023m2d,
     title   = {{Masked Modeling Duo: Learning Representations by Encouraging Both Networks to Model the Input}},
     author  = {Daisuke Niizumi and Daiki Takeuchi and Yasunori Ohishi and Noboru Harada and Kunio Kashino},
-    journal = {to appear at ICASSP}, 
+    booktitle={ICASSP 2023 - 2023 IEEE International Conference on Acoustics, Speech and Signal Processing (ICASSP)}, 
     year    = {2023},
-    url     = {https://arxiv.org/abs/2210.14648}
+    url     = {https://ieeexplore.ieee.org/document/10097236},
+    doi     = {10.1109/ICASSP49357.2023.10097236}}
+}
+
+@article{niizumi2023m2d4speech,
+    title   = {{Masked Modeling Duo for Speech: Specializing General-Purpose Audio Representation to Speech using Denoising Distillation}},
+    author  = {Daisuke Niizumi and Daiki Takeuchi and Yasunori Ohishi and Noboru Harada and Kunio Kashino},
+    journal = {to appear at Interspeech}, 
+    year    = {2023},
+    url     = {https://arxiv.org/abs/2305.14079}
 }
 ```
+
+## M2D For Speech (M2D-S)
+
+👉 Please visit [speech folder](speech/README.md).
 
 ## 1. Getting Started
 
@@ -32,9 +50,11 @@ curl -o util/lr_sched.py https://raw.githubusercontent.com/facebookresearch/mae/
 curl -o util/misc.py https://raw.githubusercontent.com/facebookresearch/mae/efb2a8062c206524e35e47d04501ed4f544c0ae8/util/misc.py
 curl -o m2d/pos_embed.py https://raw.githubusercontent.com/facebookresearch/mae/efb2a8062c206524e35e47d04501ed4f544c0ae8/util/pos_embed.py
 curl -o train_audio.py https://raw.githubusercontent.com/facebookresearch/mae/efb2a8062c206524e35e47d04501ed4f544c0ae8/main_pretrain.py
+curl -o train_speech.py https://raw.githubusercontent.com/facebookresearch/mae/efb2a8062c206524e35e47d04501ed4f544c0ae8/main_pretrain.py
 curl -o mae_train_audio.py https://raw.githubusercontent.com/facebookresearch/mae/efb2a8062c206524e35e47d04501ed4f544c0ae8/main_pretrain.py
 curl -o m2d/engine_pretrain_m2d.py https://raw.githubusercontent.com/facebookresearch/mae/efb2a8062c206524e35e47d04501ed4f544c0ae8/engine_pretrain.py
 curl -o m2d/models_mae.py https://raw.githubusercontent.com/facebookresearch/mae/efb2a8062c206524e35e47d04501ed4f544c0ae8/models_mae.py
+curl -o m2d/timm_layers_pos_embed.py https://raw.githubusercontent.com/huggingface/pytorch-image-models/e9373b1b925b2546706d78d25294de596bad4bfe/timm/layers/pos_embed.py
 patch -p1 < patch_m2d.diff
 ```
 
@@ -204,18 +224,29 @@ Follow the steps in [data/README.md](data/README.md).
 
 The following is an example using the [FSD50K](https://arxiv.org/abs/2010.00475) dataset.
 
-1. Preprocess .wav files into log-mel spectrogram .npy files. The following converts from a source folder `/your/local/fsd50k/FSD50K.dev_audio` to a new folder `data/lms_fsd50kdev`.
+1. Preprocess .wav files into log-mel spectrogram .npy files. The following converts from a source folder `/your/local/fsd50k/FSD50K.dev_audio` to a new folder `data/fsd50k_lms`.
 
     ```sh
-    python wav_to_lms.py /your/local/fsd50k/FSD50K.dev_audio data/lms_fsd50kdev
+    python wav_to_lms.py /your/local/fsd50k/FSD50K.dev_audio data/fsd50k_lms
     ```
 
 2. Create a CSV file that will be used as a list of pre-training samples, containing a single column `file_name`. The following example creates `files_fsd50k.csv`.
 
     ```sh
     echo file_name > data/files_fsd50k.csv
-    (cd data && find lms_fsd50kdev -name "*.npy") >> data/files_fsd50k.csv
+    (cd data && find fsd50k_lms -name "*.npy") >> data/files_fsd50k.csv
     ```
+
+Example of created folder structure:
+
+    data/
+        audioset_lms/
+          :
+        fsd50k_lms/
+            FSD50K.dev_audio/
+                2931.npy
+                408195.npy
+                    :
 
 ### 3-2. Starting pre-training
 
@@ -259,7 +290,7 @@ We appreciate these publicly available implementations and all the modules our e
 
 ## References
 
-- M2D: *[Daisuke Niizumi, Daiki Takeuchi, Yasunori Ohishi, Noboru Harada, and Kunio Kashino "Masked Modeling Duo: Learning Representations by Encouraging Both Networks to Model the Input," to appear at ICASSP, 2023](https://arxiv.org/abs/2210.14648).*
+- M2D: *[Daisuke Niizumi, Daiki Takeuchi, Yasunori Ohishi, Noboru Harada, and Kunio Kashino "Masked Modeling Duo: Learning Representations by Encouraging Both Networks to Model the Input," ICASSP, 2023](https://ieeexplore.ieee.org/document/10097236).*
 - MSM-MAE: *[Daisuke Niizumi, Daiki Takeuchi, Yasunori Ohishi, Noboru Harada, and Kunio Kashino "Masked Spectrogram Modeling using Masked Autoencoders for Learning General-purpose Audio Representation," HEAR: Holistic Evaluation of Audio Representations (NeurIPS 2021 Competition), PMLR 166:1-24, 2022](https://proceedings.mlr.press/v166/niizumi22a.html).*
 - MAE: *[Kaiming He, Xinlei Chen, Saining Xie, Yanghao Li, Piotr Dollár, and Ross Girshick "Masked Autoencoders Are Scalable Vision Learners," Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR), 2022, pp. 16000-16009](https://openaccess.thecvf.com/content/CVPR2022/html/He_Masked_Autoencoders_Are_Scalable_Vision_Learners_CVPR_2022_paper.html).*
 - FSD50K: *[Eduardo Fonseca and Xavier Favory and Jordi Pons and Frederic Font and Xavier Serra, “FSD50K: an Open Dataset of Human-Labeled Sound Events,” in IEEE/ACM Transactions on Audio, Speech, and Language Processing, vol. 30, pp. 829-852, 2022](https://ieeexplore.ieee.org/document/9645159).*

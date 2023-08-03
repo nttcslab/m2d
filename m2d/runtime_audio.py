@@ -9,11 +9,13 @@ from pathlib import Path
 
 import torch
 import torch.nn as nn
+from timm.models.layers import trunc_normal_
 from einops import rearrange
 import nnAudio.features
 import re
 
 from . import models_mae
+from .timm_layers_pos_embed import resample_abs_pos_embed 
 
 
 class Config:
@@ -28,6 +30,8 @@ class Config:
     cls_token = False
     training_mask = 0.0
     flat_features = False
+    encoder_only = True  # For using in fine-tuning
+    dur_frames = None    # None for no desired number of frames
 
     # FFT parameters.
     sample_rate = 16000
@@ -57,13 +61,20 @@ def drop_non_model_weights(model, checkpoint, filename):
         new_ckpt[k] = checkpoint[k]
     n_org = len(checkpoint.keys())
     n_cur = len(new_ckpt.keys())
-    print(f' using {n_cur} parameters, while dropped {n_org - n_cur} from {n_org} parameters in {Path(filename).parent/Path(filename).name}')
+    print(f' using {n_cur} parameters, while dropped {n_org - n_cur} out of {n_org} parameters from {Path(filename).parent/Path(filename).name}'
+          if n_org > n_cur else f' using {n_cur} parameters from {Path(filename).parent/Path(filename).name}')
     return new_ckpt
 
-def get_model(args, weight_file, encoder_only):
+def get_model(args, weight_file, encoder_only, dur_frames):
     # determine model parameters for creation
-    folder_name = Path(weight_file).parent.name
-    args.input_size, args.patch_size, args.model = parse_sizes_by_name(folder_name)
+    try:
+        args.input_size, args.patch_size, args.model = parse_sizes_by_name(Path(weight_file).parent.name)
+    except:
+        args.input_size, args.patch_size, args.model = parse_sizes_by_name(Path(weight_file).stem)
+    if dur_frames is not None:
+        org_input_size = args.input_size.copy()
+        args.input_size[1] = dur_frames
+
     if encoder_only:
         args.model = args.model + '_encoder_only'
     if Path(weight_file).name.endswith('random'):
@@ -86,10 +97,30 @@ def get_model(args, weight_file, encoder_only):
     n_stack_feature = 1 if args.flat_features else (args.input_size[0] // args.patch_size[0])
     d = model.pos_embed.shape[-1]
     args.feature_d = d * n_stack_feature
+
     # load weights
     if checkpoint:
+        # interpolate pos_embed
+        if dur_frames is not None:
+            org_grid_size = [org_input_size[0] // args.patch_size[0], org_input_size[1] // args.patch_size[1]]
+            new_grid_size = [args.input_size[0] // args.patch_size[0], args.input_size[1] // args.patch_size[1]]
+            if org_grid_size[1] < new_grid_size[1]:
+                checkpoint['pos_embed'] = resample_abs_pos_embed(checkpoint['pos_embed'], old_size=org_grid_size, new_size=new_grid_size)
+                print(' resampled pos_embed from', org_grid_size, 'to', new_grid_size, '- new pos_embed shape is', checkpoint['pos_embed'].shape)
+            elif org_grid_size[1] > new_grid_size[1]:
+                posemb = checkpoint['pos_embed']
+                _, _, D = posemb.shape
+                posemb_prefix, posemb = posemb[:, :1], posemb[:, 1:]
+                posemb = posemb.reshape(1, org_grid_size[0], org_grid_size[1], D)
+                posemb = posemb[:, :, :new_grid_size[1], :].reshape(1, new_grid_size[0]*new_grid_size[1], D)
+                checkpoint['pos_embed'] = torch.cat([posemb_prefix, posemb], dim=1)
+                print(' trimmed pos_embed from', org_grid_size, 'to', new_grid_size, '- new pos_embed shape is', checkpoint['pos_embed'].shape)
+
+        # remove non-model parameters (i.e. for using encoder only model)
         checkpoint = drop_non_model_weights(model, checkpoint, weight_file)
-        model.load_state_dict(checkpoint)
+        msg = model.load_state_dict(checkpoint)
+        print(msg)
+        logging.info(msg)
 
     model.eval()
     return model
@@ -125,12 +156,14 @@ def get_timestamps(cfg, batch_audio, x):  # Returns timestamps in milliseconds.
 
 
 class RuntimeM2D(nn.Module):
-    def __init__(self, cfg=Config(), weight_file=None, training_mask=0.0, encoder_only=False):
+    def __init__(self, cfg=Config(), weight_file=None, training_mask=0.0, encoder_only=None, dur_frames=None, num_classes=None, head_norm='layernorm'):
         super().__init__()
         cfg.weight_file = weight_file or cfg.weight_file
         cfg.training_mask = training_mask if training_mask > 0.0 else cfg.training_mask
         self.cfg = cfg
-        self.backbone = get_model(cfg, cfg.weight_file, encoder_only)
+        cfg.encoder_only = cfg.encoder_only if encoder_only is None else encoder_only
+        cfg.dur_frames = cfg.dur_frames if dur_frames is None else dur_frames
+        self.backbone = get_model(cfg, cfg.weight_file, cfg.encoder_only, cfg.dur_frames)
         # runtime masking -> structured mask for audio
         if self.is_training_mask():
             self.backbone.set_random_structured_mask()
@@ -145,6 +178,20 @@ class RuntimeM2D(nn.Module):
         self.to_spec = get_to_melspec(cfg)
 
         self.sample_rate = cfg.sample_rate
+
+        if num_classes is not None:
+            assert head_norm in ['layernorm', 'batchnorm']
+            self.head_norm = torch.nn.LayerNorm(cfg.feature_d) if head_norm == 'layernorm' else torch.nn.BatchNorm1d(cfg.feature_d, affine=False)
+            self.head = torch.nn.Linear(cfg.feature_d, num_classes)
+            trunc_normal_(self.head.weight, std=2e-5)
+
+    def forward(self, lms):
+        assert hasattr(self, 'head'), 'Set the option num_classes with your desired number of classes, such as 527 for AudioSet.'
+        x = self.encode_lms(lms)  # B, T, D
+        x = x.mean(1)  # B, D
+        x = self.head_norm(x) if isinstance(self.head_norm, torch.nn.LayerNorm) else self.head_norm(x.unsqueeze(-1)).squeeze(-1)
+        x = self.head(x)
+        return x
 
     def is_training_mask(self):
         return self.cfg.training_mask > 0.0
@@ -175,18 +222,19 @@ class RuntimeM2D(nn.Module):
 
         patch_fbins = self.backbone.grid_size()[0]
         unit_frames = self.cfg.input_size[1]
+        patch_frames = self.backbone.patch_size()[1]
         embed_d = self.backbone.patch_embed.proj.out_channels
-        cur_frames = x.shape[-1]
-        pad_frames = unit_frames - (cur_frames % unit_frames)
+        pad_frames = (patch_frames - x.shape[-1] % patch_frames) % patch_frames
         if pad_frames > 0:
             x = torch.nn.functional.pad(x, (0, pad_frames))
+        chunks = (x.shape[-1] + unit_frames - 1) // unit_frames
 
         embeddings = []
         if self.cfg.flat_features:
             # flatten all patch embeddings
             mask_ratio = self.cfg.training_mask if self.training else 0.0
-            for i in range(x.shape[-1] // unit_frames):
-                emb, *_ = self.backbone.forward_encoder(x[..., i*unit_frames:(i+1)*unit_frames], mask_ratio=mask_ratio, return_layers=return_layers)
+            for i in range(chunks):
+                emb, *_ = self.backbone.forward_encoder(x[..., i*unit_frames:(i+1)*unit_frames], mask_ratio=mask_ratio, return_layers=return_layers, adjust_short=True)
                 cls_token, emb = emb[..., :1, :], emb[..., 1:, :]
                 if self.cfg.cls_token:
                     # prepend cls token to all frame features.
@@ -197,12 +245,10 @@ class RuntimeM2D(nn.Module):
                     #   emb.shape -> [B, 1 + T*F, D]
                     emb = torch.cat([cls_token, emb], axis=-1)
                 embeddings.append(emb)
-            x = torch.cat(embeddings, axis=-2)
-            # note: we are not removing the padding frames.
         else:
             # stack embeddings along time frame
-            for i in range(x.shape[-1] // unit_frames):
-                emb, *_ = self.backbone.forward_encoder(x[..., i*unit_frames:(i+1)*unit_frames], mask_ratio=0., return_layers=return_layers)
+            for i in range(chunks):
+                emb, *_ = self.backbone.forward_encoder(x[..., i*unit_frames:(i+1)*unit_frames], mask_ratio=0., return_layers=return_layers, adjust_short=True)
                 cls_token, emb = emb[..., :1, :], emb[..., 1:, :]
                 if len(emb.shape) > 3:
                     emb = rearrange(emb, 'L b (f t) d -> L b t (f d)', f=patch_fbins, d=embed_d)  # Layer-wise embeddings
@@ -215,14 +261,9 @@ class RuntimeM2D(nn.Module):
                     #  cat([B, 1, D].repeat(1, T, 1), [B, T, F*D]) -> [B, T, (1 + F)*D]
                     emb = torch.cat([cls_token.repeat(*([1]*(len(emb.shape) - 2)), emb.shape[-2], 1), emb], axis=-1)
                 embeddings.append(emb)
-            # cut the padding at the end
-            x = torch.cat(embeddings, axis=-2)
-            pad_emb_frames = int(embeddings[0].shape[-2] * pad_frames / unit_frames)
-            # print(2, x.shape, embeddings[0].shape, pad_emb_frames)
-            if pad_emb_frames > 0:
-                x = x[..., :-pad_emb_frames, :] # remove padded tail
-            # print(3, x.shape)
-        return x if len(emb.shape) == 3 else [x_ for x_ in x]
+        # concatenate chunks in the time axis
+        x = torch.cat(embeddings, axis=-2)
+        return x if len(x.shape) == 3 else [x_ for x_ in x]
 
     def encode(self, batch_audio):
         x = self.to_normalized_spec(batch_audio)

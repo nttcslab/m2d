@@ -38,13 +38,14 @@ class SpectrogramDataset(torch.utils.data.Dataset):
     """
 
     def __init__(self, folder, files, crop_frames, norm_stats=None,
-                 tfms=None, random_crop=True, n_norm_calc=10000):
+                 tfms=None, random_crop=True, n_norm_calc=10000, repeat_short=False):
         super().__init__()
         self.folder = Path(folder)
         self.df = pd.DataFrame({'file_name': files})
         self.crop_frames = crop_frames
         self.tfms = tfms
         self.random_crop = random_crop
+        self.repeat_short = repeat_short
 
         # Norm stats
         if norm_stats is None:
@@ -78,17 +79,28 @@ class SpectrogramDataset(torch.utils.data.Dataset):
         filename = self.folder/self.df.file_name.values[index]
         return self.get_audio_file(filename)
 
-    def complete_audio(self, lms, dont_tfms=False):
-        # Trim or pad
+    def complete_audio(self, lms, dont_tfms=False, org_index=None):
+        # Repeat if short
         l = lms.shape[-1]
+        if self.repeat_short and l < self.crop_frames:
+            while l < self.crop_frames:
+                lms = torch.cat([lms, lms], dim=-1)
+                l = lms.shape[-1]
+            # print(f'Repeated short sample (< {self.crop_frames}) at {org_index} as {lms.shape}')
+
+        # Trim or pad
+        start = 0
         if l > self.crop_frames:
-            start = np.random.randint(l - self.crop_frames) if self.random_crop else 0
+            start = int(torch.randint(l - self.crop_frames, (1,))[0]) if self.random_crop else 0
             lms = lms[..., start:start + self.crop_frames]
+            # if org_index is not None and org_index % 1000 == 0:
+            #     print(org_index, 'trimmed from', start)
         elif l < self.crop_frames:
             pad_param = []
             for i in range(len(lms.shape)):
                 pad_param += [0, self.crop_frames - l] if i == 0 else [0, 0]
             lms = F.pad(lms, pad_param, mode='constant', value=0)
+        self.last_crop_start = start
         lms = lms.to(torch.float)
 
         # Normalize
@@ -104,7 +116,7 @@ class SpectrogramDataset(torch.utils.data.Dataset):
 
     def __getitem__(self, index):
         lms = self.get_audio(index)
-        return self.complete_audio(lms)
+        return self.complete_audio(lms, org_index=index)
 
     def __repr__(self):
         format_string = self.__class__.__name__ + f'(crop_frames={self.crop_frames}, random_crop={self.random_crop}, '

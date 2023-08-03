@@ -44,7 +44,7 @@ def prmstr_zz(prm):
     return '-'.join(ps)
 
 
-def arg_conf_str(args, defaults={
+conf_defaults={
     'dataset': ('data/files_audioset.csv', 'D', 'path'),
     'ema_decay_init': (0.99995, 'ema', 'z'),
     'ema_decay': (0.99999, 'ed', 'z'),
@@ -55,7 +55,13 @@ def arg_conf_str(args, defaults={
     'loss_fn': ('norm_mse', 'L', 'head'),
     'optim': ('adamw', 'O', 'asis'),
     'blr': (3e-4, 'blr', 'z'),
-}):
+    'lr': (None, 'lr', 'z'),
+    'eff_batch_size': (2048, 'bs', 'asis'),
+    'accum_iter': (1, 'a', 'asis'),
+}
+
+
+def arg_conf_str(args, defaults=conf_defaults):
     confstr = ''
     for k in defaults:
         try:

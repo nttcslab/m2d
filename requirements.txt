@@ -7,8 +7,11 @@ torchvision
 tensorboard
 fire
 tqdm
-sklearn
+scikit-learn
 librosa
 nnAudio
 timm
+transformers
 einops
+easydict
+torchlibrosa

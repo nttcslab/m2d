@@ -14,7 +14,9 @@ window: hanning
 
 # Model specific parameters.
 cls_token: False # Use CLS token
-output_layers: [-1]  # list of layers to stack
+output_layers: [-1]  # List of layers to stack
+encoder_only: False
+dur_frames:  # None for no desired number of frames
 
 # Linear evaluation/Fine-tuning common parameters.
 training_mask: 0.0

@@ -37,7 +37,7 @@ class FFT_parameters:
 
 
 def _converter_worker(args):
-    subpathname, from_dir, to_dir, prms, to_lms, suffix, verbose = args
+    subpathname, from_dir, to_dir, prms, to_lms, suffix, min_length, verbose = args
     from_dir, to_dir = Path(from_dir), Path(to_dir)
     to_name = to_dir/(subpathname[:-len(suffix)]+'.npy')
 
@@ -48,6 +48,15 @@ def _converter_worker(args):
     # load and convert to a log-mel spectrogram
     try:
         wav, org_sr = librosa.load(str(from_dir/subpathname), mono=True, sr=prms.sample_rate)
+
+        # pad if short
+        if min_length is not None:
+            min_length = int(FFT_parameters.sample_rate * min_length)
+            if wav.shape[-1] < min_length:
+                print('from', wav.shape)
+                wav = np.pad(wav, (0, min_length - wav.shape[-1]))
+                print('to', wav.shape)
+
         lms = to_lms(wav)
     except Exception as e:
         print('ERROR failed to open or convert', subpathname, '-', str(e))
@@ -85,7 +94,7 @@ class ToLogMelSpec:
         return x
 
 
-def convert_wav(from_dir, to_dir, suffix='.wav', skip=0, verbose=False) -> None:
+def convert_wav(from_dir, to_dir, suffix='.wav', skip=0, min_length=6.1, verbose=False) -> None:
     from_dir = str(from_dir)
     files = [str(f).replace(from_dir, '') for f in Path(from_dir).glob(f'**/*{suffix}')]
     files = [f[1:] if f[0] == '/' else f for f in files]
@@ -100,7 +109,7 @@ def convert_wav(from_dir, to_dir, suffix='.wav', skip=0, verbose=False) -> None:
     assert len(files) > 0
 
     with Pool() as p:
-        args = [[f, from_dir, to_dir, prms, to_lms, suffix, verbose] for f in files]
+        args = [[f, from_dir, to_dir, prms, to_lms, suffix, min_length, verbose] for f in files]
         shapes = list(tqdm(p.imap(_converter_worker, args), total=len(args)))
 
     print('finished.')
