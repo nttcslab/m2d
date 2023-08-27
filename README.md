@@ -24,12 +24,13 @@ If you find our M2D useful in your research, please consider citing our paper:
     doi     = {10.1109/ICASSP49357.2023.10097236}}
 }
 
-@article{niizumi2023m2d4speech,
+@inproceedings{niizumi2023m2d4speech,
     title   = {{Masked Modeling Duo for Speech: Specializing General-Purpose Audio Representation to Speech using Denoising Distillation}},
     author  = {Daisuke Niizumi and Daiki Takeuchi and Yasunori Ohishi and Noboru Harada and Kunio Kashino},
-    journal = {to appear at Interspeech}, 
     year    = {2023},
-    url     = {https://arxiv.org/abs/2305.14079}
+    booktitle={Proc. INTERSPEECH 2023},
+    pages   = {1294--1298},
+    doi     = {10.21437/Interspeech.2023-221}
 }
 ```
 
