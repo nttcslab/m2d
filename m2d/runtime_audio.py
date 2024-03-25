@@ -6,13 +6,13 @@ sys.path.append('..')  # workaround for using heareval with `pip install -e .`
 
 import logging
 from pathlib import Path
+import re
 
 import torch
 import torch.nn as nn
 from timm.models.layers import trunc_normal_
 from einops import rearrange
 import nnAudio.features
-import re
 
 from . import models_mae
 from .timm_layers_pos_embed import resample_abs_pos_embed 
@@ -27,50 +27,71 @@ class Config:
     model = ''
     input_size = [80, 208]
     patch_size = [16, 16]
-    cls_token = False
+    sr = '16k'
     training_mask = 0.0
     flat_features = False
     encoder_only = True  # For using in fine-tuning
     dur_frames = None    # None for no desired number of frames
-
-    # FFT parameters.
-    sample_rate = 16000
-    n_fft = 400
-    window_size = 400
-    hop_size = 160
-    n_mels = 80
-    f_min = 50
-    f_max = 8000
-    window = 'hanning'
+    freeze_embed = None  # Set True if freezing PatchEmbed during fine-tuning [2211.09359] How to Fine-Tune Vision Models with SGD
 
 
 def parse_sizes_by_name(name):
     model_cls = name.split('-')[0]
     params = name.split('-')[1]
-    input_str, patch_str = params.split('p')[:2]
+    params = params.split('p')[:3]
+    input_str, patch_str, sr = params[0], params[1], params[2] if len(params) > 2 else '16k'
     input_size = [int(a) for a in input_str.split('x')]
     patch_size = [int(a) for a in patch_str.split('x')]
-    return input_size, patch_size, model_cls
+    return input_size, patch_size, sr, model_cls
 
 
-def drop_non_model_weights(model, checkpoint, filename):
+def drop_non_model_weights(model, checkpoint, filename, except_for=[]):  # except_for=['running_mean', 'running_var']
+    def not_an_exception(k):
+        for ex in except_for:
+            if ex in k: return False
+        return True
     model_keys = [n for n, p in model.named_parameters()]
     new_ckpt = {}
+    dropped = []
     for k in checkpoint:
-        if k not in model_keys: continue
+        if k not in model_keys and not_an_exception(k):
+            dropped.append(k)
+            continue
         new_ckpt[k] = checkpoint[k]
     n_org = len(checkpoint.keys())
     n_cur = len(new_ckpt.keys())
     print(f' using {n_cur} parameters, while dropped {n_org - n_cur} out of {n_org} parameters from {Path(filename).parent/Path(filename).name}'
           if n_org > n_cur else f' using {n_cur} parameters from {Path(filename).parent/Path(filename).name}')
+    print(' (dropped:', dropped[:5], ')' if len(dropped) < 5 else '...)')
     return new_ckpt
 
-def get_model(args, weight_file, encoder_only, dur_frames):
+
+def load_evar_head_parameters(checkpoint, head_norm, head):
+    # Load the weights of the task head trained in the EVAR fine-tuning.
+    if 'module.head.norm.running_mean' in checkpoint:
+        head_norm.load_state_dict({to_k: checkpoint[k] for to_k, k in {
+            'running_mean':'module.head.norm.running_mean', 'running_var':'module.head.norm.running_var'}.items()})
+        head.load_state_dict({to_k: checkpoint[k] for to_k, k in {
+            'weight':'module.head.mlp.mlp.0.weight', 'bias':'module.head.mlp.mlp.0.bias'}.items()})
+    else:
+        print(' Not an EVAR checkpoint for loading head weights.')
+
+
+def reformat_evar_ckpt(checkpoint):
+    # The checkpoints saved in a EVAR fine-tuning has a prefix of "module.ar.runtime.backbone", the following removes it.
+    new_ckpt = {}
+    for k in checkpoint:
+        new_k = k.replace('module.ar.runtime.backbone.', '')  # replace
+        new_ckpt[new_k] = checkpoint[k]
+    return new_ckpt
+
+
+def get_backbone(args, weight_file, encoder_only, dur_frames):
     # determine model parameters for creation
     try:
-        args.input_size, args.patch_size, args.model = parse_sizes_by_name(Path(weight_file).parent.name)
+        args.input_size, args.patch_size, args.sr, args.model = parse_sizes_by_name(Path(weight_file).parent.name)
     except:
-        args.input_size, args.patch_size, args.model = parse_sizes_by_name(Path(weight_file).stem)
+        args.input_size, args.patch_size, args.sr, args.model = parse_sizes_by_name(Path(weight_file).stem)
     if dur_frames is not None:
         org_input_size = args.input_size.copy()
         args.input_size[1] = dur_frames
@@ -79,24 +100,30 @@ def get_model(args, weight_file, encoder_only, dur_frames):
         args.model = args.model + '_encoder_only'
     if Path(weight_file).name.endswith('random'):
         checkpoint = None
-        dec_blocks_nums = [4 - 1] # fixed for random init.
+        dec_blocks_nums = [8 - 1] # fixed for random init -> 8 is the # of decoder blocks of M2D.
+        norm_stats = [-7.1, 4.2]
         print(' **CAUTION: Random Weights**')
         logging.info(' **CAUTION: Random Weights**')
     else:
         checkpoint = torch.load(weight_file, map_location='cpu')
         checkpoint = checkpoint['model'] if 'model' in checkpoint else checkpoint
-        # determine # of decoder blocks
-        dec_blocks_nums = [int(k.split('.')[1]) for k in checkpoint.keys() if k.startswith('decoder_blocks.')]
+        checkpoint = reformat_evar_ckpt(checkpoint)
+        # determine # of decoder blocks: "decoder_blocks.1." or "decoder_blocks.layers.1" or nothing
+        dec_blocks_nums = [int(k.split('.')[2]) for k in checkpoint.keys() if k.startswith('decoder_blocks.layers')]
+        if not dec_blocks_nums:
+            dec_blocks_nums = [int(k.split('.')[1]) for k in checkpoint.keys() if k.startswith('decoder_blocks.')]
+        if not dec_blocks_nums:
+            dec_blocks_nums = [8 - 1] # fixed for random init -> 8 is the # of decoder blocks of M2D.
+        norm_stats = checkpoint['norm_stats'] if 'norm_stats' in checkpoint else [-7.1, 4.2]
     args.decoder_depth = max(dec_blocks_nums) + 1
 
-    logging.info(f'Creating model: {args.model}(input={args.input_size}, patch={args.patch_size}, decoder_depth={args.decoder_depth})')
-    model = models_mae.__dict__[args.model](img_size=args.input_size, patch_size=args.patch_size, decoder_depth=args.decoder_depth)
+    model_args = dict(img_size=args.input_size, patch_size=args.patch_size, decoder_depth=args.decoder_depth, norm_stats=norm_stats)
+    if args.model.startswith('m2d_x_vit'):
+        off_emb_dim = 3840 if checkpoint is None else checkpoint['offline_predictor.weight'].shape[0]
+        model_args['off_emb_dim'] = off_emb_dim
 
-    # set feature_d
-    args.flat_features = True if args.training_mask > 0.0 else args.flat_features
-    n_stack_feature = 1 if args.flat_features else (args.input_size[0] // args.patch_size[0])
-    d = model.pos_embed.shape[-1]
-    args.feature_d = d * n_stack_feature
+    logging.info(f'Creating model: {args.model}({model_args})')
+    model = models_mae.__dict__[args.model](**model_args)
 
     # load weights
     if checkpoint:
@@ -115,18 +142,32 @@ def get_model(args, weight_file, encoder_only, dur_frames):
                 posemb = posemb[:, :, :new_grid_size[1], :].reshape(1, new_grid_size[0]*new_grid_size[1], D)
                 checkpoint['pos_embed'] = torch.cat([posemb_prefix, posemb], dim=1)
                 print(' trimmed pos_embed from', org_grid_size, 'to', new_grid_size, '- new pos_embed shape is', checkpoint['pos_embed'].shape)
+        # backward compatibility: norm_stats
+        checkpoint['norm_stats'] = checkpoint['norm_stats'] if 'norm_stats' in checkpoint else torch.tensor(norm_stats)
 
         # remove non-model parameters (i.e. for using encoder only model)
-        checkpoint = drop_non_model_weights(model, checkpoint, weight_file)
-        msg = model.load_state_dict(checkpoint)
+        dropped = drop_non_model_weights(model, checkpoint, weight_file)
+        msg = model.load_state_dict(dropped)
         print(msg)
         logging.info(msg)
 
+    # set normalization statistics
+    args.mean, args.std = norm_stats
+
     model.eval()
-    return model
+    return model, checkpoint
 
 
 def get_to_melspec(cfg):
+    if cfg.sr == '16k':
+        cfg.sample_rate, cfg.n_fft, cfg.window_size, cfg.hop_size = 16000, 400, 400, 160
+        cfg.n_mels, cfg.f_min, cfg.f_max = 80, 50, 8000
+    elif cfg.sr == '32k':
+        cfg.sample_rate, cfg.n_fft, cfg.window_size, cfg.hop_size = 32000, 800, 800, 320
+        cfg.n_mels, cfg.f_min, cfg.f_max = 80, 50, 16000
+    else:
+        assert False, f'Unknown input size: {cfg.input_size}'
+
     to_spec = nnAudio.features.MelSpectrogram(
         sr=cfg.sample_rate,
         n_fft=cfg.n_fft,
@@ -156,34 +197,48 @@ def get_timestamps(cfg, batch_audio, x):  # Returns timestamps in milliseconds.
 
 
 class RuntimeM2D(nn.Module):
-    def __init__(self, cfg=Config(), weight_file=None, training_mask=0.0, encoder_only=None, dur_frames=None, num_classes=None, head_norm='layernorm'):
+    def __init__(self, cfg=Config(), weight_file=None, training_mask=0.0, encoder_only=None, dur_frames=None, num_classes=None, head_norm='batchnorm', freeze_embed=None):
         super().__init__()
         cfg.weight_file = weight_file or cfg.weight_file
         cfg.training_mask = training_mask if training_mask > 0.0 else cfg.training_mask
         self.cfg = cfg
         cfg.encoder_only = cfg.encoder_only if encoder_only is None else encoder_only
         cfg.dur_frames = cfg.dur_frames if dur_frames is None else dur_frames
-        self.backbone = get_model(cfg, cfg.weight_file, cfg.encoder_only, cfg.dur_frames)
-        # runtime masking -> structured mask for audio
-        if self.is_training_mask():
-            self.backbone.set_random_structured_mask()
+        cfg.freeze_embed = cfg.freeze_embed if freeze_embed is None else freeze_embed
 
-        logging.info(str(cfg))
-        logging.info(f'Model input size: {cfg.input_size}')
-        logging.info(f'Using weights: {cfg.weight_file}')
-        logging.info(f'[CLS] token?: {cfg.cls_token}')
-        logging.info(f'training_mask: {cfg.training_mask}')
-        logging.info(f'flat_features: {cfg.flat_features}')
-
-        self.to_spec = get_to_melspec(cfg)
-
-        self.sample_rate = cfg.sample_rate
-
+        # Create backbone model
+        self.backbone, checkpoint = get_backbone(cfg, cfg.weight_file, cfg.encoder_only, cfg.dur_frames)
+        # Finalize feature dimension (768 if flat_features else 768*5=3840)
+        d = self.backbone.pos_embed.shape[-1]
+        if self.is_training_mask() or \
+         (num_classes is not None and 'module.head.mlp.mlp.0.weight' in checkpoint and checkpoint['module.head.mlp.mlp.0.weight'].shape[-1] == d):
+            cfg.flat_features = True
+        n_stack_feature = 1 if cfg.flat_features else (cfg.input_size[0] // cfg.patch_size[0])
+        cfg.feature_d = d * n_stack_feature
+        # Create head
         if num_classes is not None:
             assert head_norm in ['layernorm', 'batchnorm']
             self.head_norm = torch.nn.LayerNorm(cfg.feature_d) if head_norm == 'layernorm' else torch.nn.BatchNorm1d(cfg.feature_d, affine=False)
             self.head = torch.nn.Linear(cfg.feature_d, num_classes)
             trunc_normal_(self.head.weight, std=2e-5)
+            load_evar_head_parameters(checkpoint, self.head_norm, self.head)
+        # Option: if training_mask is enabled, set structured masking
+        if self.is_training_mask():
+            self.backbone.set_random_structured_mask()
+        # Option: freeze patch embedding ([2211.09359] How to Fine-Tune Vision Models with SGD)
+        if cfg.freeze_embed:
+            models_mae.set_requires_grad(self.backbone.patch_embed, False)
+            logging.info(' ** Freeze patch_embed **')
+            logging.info(self.backbone.patch_embed)
+
+        logging.info(str(cfg))
+        logging.info(f'Model input size: {cfg.input_size}')
+        logging.info(f'Using weights: {cfg.weight_file}')
+        logging.info(f'training_mask: {cfg.training_mask}')
+        logging.info(f'flat_features: {cfg.flat_features}')
+
+        self.to_spec = get_to_melspec(cfg)
+        self.sample_rate = cfg.sample_rate
 
     def forward(self, lms):
         assert hasattr(self, 'head'), 'Set the option num_classes with your desired number of classes, such as 527 for AudioSet.'
@@ -203,31 +258,29 @@ class RuntimeM2D(nn.Module):
         x = x.unsqueeze(1)
         return x
 
-    def normalize_batch(self, x, return_stats=False):
-        mu, sigma = x.mean(), x.std()
-        x = (x - mu) / sigma
-        if return_stats:
-            return x, (mu, sigma)
+    def normalize_batch(self, x):
+        x = (x - self.cfg.mean) / self.cfg.std
         return x
 
-    def to_normalized_spec(self, batch_audio, return_stats=False):
+    def to_normalized_spec(self, batch_audio):
         # raw -> spectrogram
         x = self.to_feature(batch_audio)
         # normalize among batch samples
-        x = self.normalize_batch(x, return_stats=return_stats)
+        x = self.normalize_batch(x)
         return x
 
-    def encode_lms(self, lms, return_layers=False):
-        x = lms
+    def encode_lms(self, x, return_layers=False):
+        if self.cfg.dur_frames is not None:
+            return self.encode_lms_w_duration(x, return_layers=return_layers)
 
         patch_fbins = self.backbone.grid_size()[0]
         unit_frames = self.cfg.input_size[1]
         patch_frames = self.backbone.patch_size()[1]
         embed_d = self.backbone.patch_embed.proj.out_channels
+        chunks = (x.shape[-1] + unit_frames - 1) // unit_frames
         pad_frames = (patch_frames - x.shape[-1] % patch_frames) % patch_frames
         if pad_frames > 0:
             x = torch.nn.functional.pad(x, (0, pad_frames))
-        chunks = (x.shape[-1] + unit_frames - 1) // unit_frames
 
         embeddings = []
         if self.cfg.flat_features:
@@ -236,14 +289,6 @@ class RuntimeM2D(nn.Module):
             for i in range(chunks):
                 emb, *_ = self.backbone.forward_encoder(x[..., i*unit_frames:(i+1)*unit_frames], mask_ratio=mask_ratio, return_layers=return_layers, adjust_short=True)
                 cls_token, emb = emb[..., :1, :], emb[..., 1:, :]
-                if self.cfg.cls_token:
-                    # prepend cls token to all frame features.
-                    # in:
-                    #   cls_token.shape -> [B, 1, D]
-                    #   emb.shape -> [B, T*F, D]
-                    # out:
-                    #   emb.shape -> [B, 1 + T*F, D]
-                    emb = torch.cat([cls_token, emb], axis=-1)
                 embeddings.append(emb)
         else:
             # stack embeddings along time frame
@@ -254,15 +299,25 @@ class RuntimeM2D(nn.Module):
                     emb = rearrange(emb, 'L b (f t) d -> L b t (f d)', f=patch_fbins, d=embed_d)  # Layer-wise embeddings
                 else:
                     emb = rearrange(emb, 'b (f t) d -> b t (f d)', f=patch_fbins, d=embed_d)
-
-                if self.cfg.cls_token:
-                    # prepend cls token to all frame features.
-                    #  cat([L, B, 1, D].repeat(1, T, 1), [L, B, T, F*D]) -> [L, B, T, (1 + F)*D] or
-                    #  cat([B, 1, D].repeat(1, T, 1), [B, T, F*D]) -> [B, T, (1 + F)*D]
-                    emb = torch.cat([cls_token.repeat(*([1]*(len(emb.shape) - 2)), emb.shape[-2], 1), emb], axis=-1)
                 embeddings.append(emb)
         # concatenate chunks in the time axis
         x = torch.cat(embeddings, axis=-2)
+        return x if len(x.shape) == 3 else [x_ for x_ in x]
+
+    def encode_lms_w_duration(self, x, return_layers=False):
+        # encode x without splitting into chunks.
+        mask_ratio = self.cfg.training_mask if self.training else 0.0
+        x, *_ = self.backbone.forward_encoder(x, mask_ratio=mask_ratio, return_layers=return_layers, adjust_short=True)
+        x = x[..., 1:, :]  # remove cls_token
+        if not self.cfg.flat_features:
+            # stack embeddings along time frame
+            patch_fbins = self.backbone.grid_size()[0]
+            embed_d = self.backbone.patch_embed.proj.out_channels
+            if len(x.shape) > 3:
+                x = rearrange(x, 'L b (f t) d -> L b t (f d)', f=patch_fbins, d=embed_d)  # Layer-wise embeddings
+            else:
+                x = rearrange(x, 'b (f t) d -> b t (f d)', f=patch_fbins, d=embed_d)
+
         return x if len(x.shape) == 3 else [x_ for x_ in x]
 
     def encode(self, batch_audio):

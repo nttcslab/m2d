@@ -93,12 +93,81 @@ class SpeechHybridDataset(SpectrogramDataset):
         return items
 
 
+import pandas as pd
+class SpeechHybridLabelDataset(SpeechHybridDataset):
+    def __init__(self, folder, files, crop_size, norm_stats=None,
+                 random_crop=True, n_norm_calc=20000, 
+                 label_csv='data/ls960_train_hubert_base_ls960_L9_km500.csv', n_classes=500,
+                 patch_len=None):
+        super().__init__(folder, files, crop_size, norm_stats, random_crop, n_norm_calc, patch_len)
+
+        df = pd.read_csv(label_csv)
+        df['id_'] = [x.split('/')[-1][:-5] for x in df.file_name.values]
+        df = df.sort_values('file_name')
+
+        files_id_ = [f.split('/')[-1][:-4] for f in files]
+        assert all(files_id_ == df.id_.values), 'Mismatch between LMS files and labels.'
+
+        # convert label text into list of labels
+        df['labels'] = [[int(x) for x in label.split(' ')] for label in df.labels.values]
+        df['file_name'] = files
+        self.df = df
+        self.label_len = crop_size[1] // patch_len
+        self.n_classes = n_classes
+
+    def complete_data(self, lms, label):
+        # crop & normalize
+        x = super().complete_audio(lms)
+        j = self.last_crop_start
+        if not hasattr(self, 'norm_stats'):
+            return x  # for norm_stats calculation
+
+        label_j = (self.label_len * j) // self.crop_frames
+        assert (self.crop_frames % self.label_len) == 0, f'LMS frame length has to be multiple of label length.'
+        # convert label into one-hot encoding and shrink the label length
+        # repeat the last label for short labels to ensure that the frame length matches the label length
+        padded_frames = max(lms.shape[-1], self.crop_frames)
+        n_patches = (padded_frames + self.patch_len - 1) // self.patch_len
+        n_frames = n_patches * self.patch_len
+        n_labels = (n_frames + 1) // 2  # frames=100Hz vs labels=50Hz
+        if len(label) < n_labels:
+            n_repeat = n_labels - len(label)
+            label = label + ([label[-1]] * n_repeat)
+            assert len(label) == n_labels
+        # shrink labels to match the patch length
+        onehot = np.eye(self.n_classes)[label]
+        n_label_per_patch = self.patch_len // 2
+        cur_len = len(label)
+        new_len = cur_len // n_label_per_patch
+        onehot = onehot.T.reshape(-1, new_len, n_label_per_patch).sum(axis=-1).T
+        onehot = onehot / n_label_per_patch  # values in a one-hot label should sum to 1.
+        # crop label
+        onehot = onehot[label_j:label_j + self.label_len, :]
+
+        if onehot.shape[0] < self.label_len:
+            print(onehot.shape, lms.shape, i, j, h, w, n_patches, n_frames, n_labels, cur_len, new_len, label_j, label_j + self.label_len)
+        return x, torch.tensor(onehot).to(float)
+
+    def __getitem__(self, index):
+        filename = self.folder/self.df.file_name.values[index]
+        try:
+            hybrid = np.load(str(filename))
+        except:
+            assert False, f'Failed to load: {filename}'
+        lms = torch.tensor(hybrid['arr_0'])
+
+        label = self.df.labels.values[index] if hasattr(self, 'norm_stats') else ['not needed']
+        items = self.complete_data(lms, label)
+        return items
+
+
 class MixedSpeechDataset(torch.utils.data.Dataset):
     def __init__(self, base_folder, files_speech, files_bg_noise, crop_size, patch_len, noise_ratio=0.0,
-                 random_crop=True, n_norm_calc=10000) -> None:
+                 random_crop=True, n_norm_calc=10000, use_label=False) -> None:
         super().__init__()
 
-        self.ds1 = SpeechHybridDataset(folder=base_folder, files=files_speech, crop_size=crop_size,
+        ds_cls = SpeechHybridLabelDataset if use_label else SpeechHybridDataset
+        self.ds1 = ds_cls(folder=base_folder, files=files_speech, crop_size=crop_size,
                 random_crop=random_crop, norm_stats=None, n_norm_calc=n_norm_calc//2,
                 patch_len=patch_len)
         # disable normalizion scaling in the ds1
@@ -147,8 +216,13 @@ def build_mixed_speech_dataset(cfg):
         base_folder=cfg.data_path, files_speech=get_files(cfg.csv_main),
         files_bg_noise=get_files(cfg.csv_bg_noise) if cfg.noise_ratio > 0. else [],
         crop_size=cfg.input_size, patch_len=cfg.patch_size[1],
-        noise_ratio=cfg.noise_ratio)
-    return ds
+        noise_ratio=cfg.noise_ratio, use_label=(cfg.model in ['m2d_s_vit_label_base', 'm2d_s_vit_label_bce_base',
+         'm2d_s_vit_label2_base', 'm2d_s_vit_label2_bce_base', 'm2d_s_vit_hubert_base']))
+
+    val_ds = SpectrogramDataset(folder=cfg.data_path, files=get_files(cfg.csv_val), crop_frames=cfg.input_size[1], random_crop=True) \
+        if cfg.csv_val else None
+
+    return ds, val_ds
 
 
 def build_viz_dataset(cfg):

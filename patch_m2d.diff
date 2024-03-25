@@ -1,20 +1,21 @@
---- _org/train_audio.py	2023-03-22 07:24:53.599768153 +0900
-+++ train_audio.py	2023-08-02 14:31:32.714106252 +0900
+--- _org/train_audio.py	2023-07-07 10:22:30.225586716 +0900
++++ train_audio.py	2024-03-25 19:10:03.864143202 +0900
 @@ -1,3 +1,9 @@
-+"""Masked Modeling Duo (M2D) Pre-training Script
++"""Masked Modeling Duo (M2D) Pre-training Script V2
 +
-+Masked Modeling Duo: Learning Representations by Encouraging Both Networks to Model the Input
-+https://ieeexplore.ieee.org/document/10097236/
++Masked Modeling Duo: Towards Universal Audio Pre-training Framework
++https://TBD
 +"""
 +
  # Copyright (c) Meta Platforms, Inc. and affiliates.
  # All rights reserved.
  
-@@ -15,69 +21,91 @@
+@@ -15,69 +21,102 @@
  import os
  import time
  from pathlib import Path
 +import subprocess
++import sys
  
  import torch
  import torch.backends.cudnn as cudnn
@@ -24,8 +25,8 @@
 +from functools import partial
 +import matplotlib.pyplot as plt
  
- import timm
- 
+-import timm
+-
 -assert timm.__version__ == "0.3.2"  # version check
  import timm.optim.optim_factory as optim_factory
  
@@ -33,39 +34,41 @@
  from util.misc import NativeScalerWithGradNormCount as NativeScaler
  
 -import models_mae
-+from m2d import models_mae
- 
+-
 -from engine_pretrain import train_one_epoch
-+from m2d.engine_pretrain_m2d import train_one_epoch
++from m2d import models_mae
++from m2d.engine_pretrain_m2d import train_one_epoch_m2dx
 +import audio_dataset
 +import common
++from m2d.runtime_audio import RuntimeM2D
  
  
  def get_args_parser():
 -    parser = argparse.ArgumentParser('MAE pre-training', add_help=False)
 -    parser.add_argument('--batch_size', default=64, type=int,
-+    parser = argparse.ArgumentParser('Masked Modeling Duo (M2D) pre-training', add_help=False)
++    parser = argparse.ArgumentParser('Masked Modeling Duo (M2D) pre-training V2', add_help=False)
 +    parser.add_argument('--batch_size', default=512, type=int,
                          help='Batch size per GPU (effective batch size is batch_size * accum_iter * # gpus')
 -    parser.add_argument('--epochs', default=400, type=int)
 +    parser.add_argument('--epochs', default=300, type=int)
      parser.add_argument('--accum_iter', default=1, type=int,
                          help='Accumulate gradient iterations (for increasing the effective batch size under memory constraints)')
-+    parser.add_argument('--eval_after', default=100, type=int)
++    parser.add_argument('--eval_after', default=50, type=int)
 +    parser.add_argument('--save_freq', default=100, type=int)
++    parser.add_argument('--feature_eval_freq', default=10, type=int, help='Feature label-free evaluation frequency.')
 +    parser.add_argument('--stop_at', default=-1, type=int)
  
      # Model parameters
 -    parser.add_argument('--model', default='mae_vit_large_patch16', type=str, metavar='MODEL',
-+    parser.add_argument('--model', default='m2d_vit_base', type=str, metavar='MODEL',
-                         help='Name of model to train')
-+    parser.add_argument('--decoder_depth', type=int, default=8, metavar='DD',
-+                        help='model decoder depth')
+-                        help='Name of model to train')
++    parser.add_argument('--model', default='m2d_vit_base', type=str, metavar='MODEL', help='Model name.')
++    parser.add_argument('--decoder_depth', type=int, default=8, metavar='DD', help='Model decoder depth.')
  
 -    parser.add_argument('--input_size', default=224, type=int,
 -                        help='images input size')
-+    parser.add_argument('--input_size', default='80x208', type=str, help='images input size')
++    parser.add_argument('--input_size', default='80x608', type=str, help='images input size')
 +    parser.add_argument('--patch_size', default='16x16', type=str, help='patch size')
++    parser.add_argument('--sr', default='16k', type=str, metavar='SR', help='Sampling rate of the input audio.')
  
 -    parser.add_argument('--mask_ratio', default=0.75, type=float,
 +    parser.add_argument('--mask_ratio', default=0.7, type=float,
@@ -76,8 +79,12 @@
 +                        help='EMA decay parameter.')
 +    parser.add_argument('--loss_fn', default='norm_mse', type=str,
 +                        help='loss function: mse or norm_mse.')
++    parser.add_argument('--loss_m2d', default=1., type=float, help='Loss of M2D masked prediction')
++    parser.add_argument('--loss_off', default=0., type=float, help='Loss of offline target')
 +    parser.add_argument('--target_layers', default='', type=str,
 +                        help='Experimental: layers to calculate target representations.')
++    parser.add_argument('--bf16', action='store_true')
++    parser.add_argument('--teacher', default='', type=str, help='Weight path of the teacher M2D model.')
  
 -    parser.add_argument('--norm_pix_loss', action='store_true',
 +    parser.add_argument('--no_norm_pix_loss', action='store_false', dest='norm_pix_loss',
@@ -108,10 +115,18 @@
 -    parser.add_argument('--data_path', default='/datasets01/imagenet_full_size/061417/', type=str,
 +    parser.add_argument('--data_path', default='data', type=str,
                          help='dataset path')
-+    parser.add_argument('--dataset', default='data/files_audioset.csv', type=str,
-+                        help='A CSV file to list sample files in the dataset')
++    parser.add_argument('--csv_main', default='data/files_audioset.csv', type=str,
++                        help='A CSV file to list sample files in the main dataset')
++    parser.add_argument('--csv_bg_noise', default='', type=str,
++                        help='A CSV file to list sample files in the BG noise dataset')
++    parser.add_argument('--csv_val', default='', type=str,
++                        help='A CSV file to list validation sample files')
++    parser.add_argument('--min_ds_size', default=10000, type=int,
++                        help='Inflate the size of the smaller dataset to the desired size')
 +    parser.add_argument('--norm_stats', default='None', type=str,  # Will be computed runtime.
 +                        help='dataset normalization stats')
++    parser.add_argument('--noise_ratio', default=0., type=float,
++                        help='Noise mixing ratio')
  
 -    parser.add_argument('--output_dir', default='./output_dir',
 +    parser.add_argument('--output_dir', default='',
@@ -121,16 +136,27 @@
                          help='path where to tensorboard log')
      parser.add_argument('--device', default='cuda',
                          help='device to use for training / testing')
-@@ -87,6 +115,8 @@
+@@ -87,7 +126,9 @@
  
      parser.add_argument('--start_epoch', default=0, type=int, metavar='N',
                          help='start epoch')
-+    parser.add_argument('--force_start_epoch', default=-1, type=int, metavar='N',
+-    parser.add_argument('--num_workers', default=10, type=int)
++    parser.add_argument('--force_start_epoch', default=0, type=int, metavar='N',  # 0=always reset start epoch to 0 even if using --resume
 +                        help='start epoch for resuming')
-     parser.add_argument('--num_workers', default=10, type=int)
++    parser.add_argument('--num_workers', default=8, type=int)
      parser.add_argument('--pin_mem', action='store_true',
                          help='Pin CPU memory in DataLoader for more efficient (sometimes) transfer to GPU.')
-@@ -104,9 +134,46 @@
+     parser.add_argument('--no_pin_mem', action='store_false', dest='pin_mem')
+@@ -96,7 +137,7 @@
+     # distributed training parameters
+     parser.add_argument('--world_size', default=1, type=int,
+                         help='number of distributed processes')
+-    parser.add_argument('--local_rank', default=-1, type=int)
++    parser.add_argument('--local-rank' if torch.__version__ >= "2.0.0" else '--local_rank', default=-1, type=int)
+     parser.add_argument('--dist_on_itp', action='store_true')
+     parser.add_argument('--dist_url', default='env://',
+                         help='url used to set up distributed training')
+@@ -104,9 +145,38 @@
      return parser
  
  
@@ -150,36 +176,28 @@
 +    assert False, f'Unsupported optimizer {args.optim}'
 +
 +
-+def visualize_reconstruction(args, device, model, save_path):
-+    ds, files = audio_dataset.build_viz_dataset(args)
-+    if (ds is None) or (len(ds) == 0):
-+        print(f'--Skipped visualization (No samples in {args.data_path}/vis_samples folder.)')
-+        return
-+    batch = torch.stack([ds[i] for i in range(len(ds))])
-+    model.eval()
-+    with torch.no_grad():
-+        recons, _, masks = model.forward_viz(batch.to(device))
-+    save_path.mkdir(parents=True, exist_ok=True)
-+    viz_imgs = [batch[:, 0], masks] if recons is None else [batch[:, 0], recons[:, 0], masks]
++def load_model(args, model_without_ddp, optimizer, loss_scaler, delta_epoch=1, strict=True):
++    if args.resume:
++        if args.resume.startswith('https'):
++            checkpoint = torch.hub.load_state_dict_from_url(
++                args.resume, map_location='cpu', check_hash=True)
++        else:
++            checkpoint = torch.load(args.resume, map_location='cpu')
++        model_without_ddp.load_state_dict(checkpoint['model'], strict=strict)
++        print("Resume checkpoint %s" % args.resume)
++        if strict == True and 'optimizer' in checkpoint and 'epoch' in checkpoint and not (hasattr(args, 'eval') and args.eval):
++            optimizer.load_state_dict(checkpoint['optimizer'])
++            args.start_epoch = checkpoint['epoch'] + delta_epoch
++            if 'scaler' in checkpoint:
++                loss_scaler.load_state_dict(checkpoint['scaler'])
++            print("With optim & sched!")
 +
-+    for i, file in enumerate(files):
-+        # as .npy
-+        if recons is not None: np.save(f"{save_path}/recon_{Path(file).name}", recons[i].cpu().numpy())
-+        # as .png
-+        cur_imgs = [img[i] for img in viz_imgs]
-+        fig = plt.figure(figsize=[12, 8 if batch[0].shape[-1] < 310 else 6])
-+        for j, img in enumerate(cur_imgs):
-+            ax = fig.add_subplot(3, 1, j + 1)
-+            ax.imshow(img.cpu().numpy(), origin='lower')
-+        plt.margins(x=0, y=0)
-+        fig.savefig(f'{save_path}/recon_{Path(file).stem}.png', bbox_inches = 'tight')
  
-+
 +def main(args):
      print('job dir: {}'.format(os.path.dirname(os.path.realpath(__file__))))
      print("{}".format(args).replace(', ', ',\n'))
  
-@@ -119,13 +186,7 @@
+@@ -119,14 +189,21 @@
  
      cudnn.benchmark = True
  
@@ -190,11 +208,26 @@
 -            transforms.ToTensor(),
 -            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])])
 -    dataset_train = datasets.ImageFolder(os.path.join(args.data_path, 'train'), transform=transform_train)
-+    dataset_train = audio_dataset.build_dataset(args)
-     print(dataset_train)
+-    print(dataset_train)
++    dataset_train, dataset_val = audio_dataset.build_mixed_dataset(args)
++    print(dataset_train, dataset_val)
++
++    if args.teacher == '':
++        print(f' ** No teacher **')
++        teacher_model, off_emb_dim = None, 3840
++        assert args.model == 'm2d_vit_base' and args.loss_off == 0.0, f'Use --model m2d_vit_base and --loss_off 0.0.'
++    else:
++        teacher_model = RuntimeM2D(weight_file=args.teacher)
++        off_emb_dim = teacher_model.cfg.feature_d
++        models_mae.set_requires_grad(teacher_model, False)
++        teacher_model.to(device)
++        teacher_model.eval()
++        print('Teacher weight =', args.teacher, 'feature_d =', off_emb_dim)
++        print("Teacher = %s" % common.short_model_desc(teacher_model))
  
      if True:  # args.distributed:
-@@ -143,6 +204,8 @@
+         num_tasks = misc.get_world_size()
+@@ -143,6 +220,8 @@
          log_writer = SummaryWriter(log_dir=args.log_dir)
      else:
          log_writer = None
@@ -203,32 +236,46 @@
  
      data_loader_train = torch.utils.data.DataLoader(
          dataset_train, sampler=sampler_train,
-@@ -153,19 +216,21 @@
+@@ -151,53 +230,83 @@
+         pin_memory=args.pin_mem,
+         drop_last=True,
      )
++
++    # for validation loss
++    if args.csv_val != '':
++        sampler_val = torch.utils.data.DistributedSampler(dataset_val, num_replicas=num_tasks, rank=global_rank, shuffle=False)
++        print("Sampler_val = %s" % str(sampler_val))
++        data_loader_val = torch.utils.data.DataLoader(dataset_val, sampler=sampler_val, batch_size=args.batch_size,
++            num_workers=args.num_workers, pin_memory=args.pin_mem, drop_last=False)
++    else:
++        data_loader_val = None
      
      # define the model
 -    model = models_mae.__dict__[args.model](norm_pix_loss=args.norm_pix_loss)
 +    model = models_mae.__dict__[args.model](img_size=args.input_size, patch_size=args.patch_size, decoder_depth=args.decoder_depth,
-+        norm_pix_loss=args.norm_pix_loss, loss_type=args.loss_fn, target_layers=args.target_layers)
++        norm_pix_loss=args.norm_pix_loss, loss_type=args.loss_fn, target_layers=args.target_layers, loss_m2d=args.loss_m2d, loss_off=args.loss_off,
++        off_emb_dim=off_emb_dim, norm_stats=dataset_train.norm_stats)
  
      model.to(device)
  
      model_without_ddp = model
--    print("Model = %s" % str(model_without_ddp))
-+    print("Model = %s" % common.short_model_desc(model_without_ddp))
- 
-     eff_batch_size = args.batch_size * args.accum_iter * misc.get_world_size()
+     print("Model = %s" % str(model_without_ddp))
+-
+-    eff_batch_size = args.batch_size * args.accum_iter * misc.get_world_size()
      
 +    org_args_lr = args.lr
      if args.lr is None:  # only base_lr is specified
-         args.lr = args.blr * eff_batch_size / 256
+-        args.lr = args.blr * eff_batch_size / 256
++        args.lr = args.blr * args.eff_batch_size / 256
  
 -    print("base lr: %.2e" % (args.lr * 256 / eff_batch_size))
-+    print("base lr: %.2e" % (args.lr * 256 / eff_batch_size) if org_args_lr is None else 'base lr: not effective')
++    print("base lr: %.2e" % (args.lr * 256 / args.eff_batch_size) if org_args_lr is None else 'base lr: not effective')
      print("actual lr: %.2e" % args.lr)
  
      print("accumulate grad iterations: %d" % args.accum_iter)
-@@ -174,30 +239,45 @@
+-    print("effective batch size: %d" % eff_batch_size)
++    print("effective batch size: %d" % args.eff_batch_size)
+ 
      if args.distributed:
          model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu], find_unused_parameters=True)
          model_without_ddp = model.module
@@ -237,13 +284,17 @@
      # following timm: set wd as 0 for bias and norm layers
 -    param_groups = optim_factory.add_weight_decay(model_without_ddp, args.weight_decay)
 -    optimizer = torch.optim.AdamW(param_groups, lr=args.lr, betas=(0.9, 0.95))
-+    param_groups = optim_factory.add_weight_decay(model_without_ddp, args.weight_decay) ## param_groups_weight_decay() for future timm
++    try:
++        param_groups = optim_factory.add_weight_decay(model_without_ddp, args.weight_decay)
++    except:
++        print(' (for compatibility with timm) Switched add_weight_decay() to param_groups_weight_decay()')
++        param_groups = optim_factory.param_groups_weight_decay(model_without_ddp, args.weight_decay)
 +    optimizer = get_optim(args, param_groups)
      print(optimizer)
      loss_scaler = NativeScaler()
  
 -    misc.load_model(args=args, model_without_ddp=model_without_ddp, optimizer=optimizer, loss_scaler=loss_scaler)
-+    misc.load_model(args=args, model_without_ddp=model_without_ddp, optimizer=optimizer, loss_scaler=loss_scaler, delta_epoch=0)
++    load_model(args=args, model_without_ddp=model_without_ddp, optimizer=optimizer, loss_scaler=loss_scaler, delta_epoch=0, strict=False)
 +
 +    if args.force_start_epoch >= 0:
 +        args.start_epoch = args.force_start_epoch
@@ -255,23 +306,26 @@
 +        epoch1 = epoch + 1
          if args.distributed:
              data_loader_train.sampler.set_epoch(epoch)
-         train_stats = train_one_epoch(
-             model, data_loader_train,
+-        train_stats = train_one_epoch(
+-            model, data_loader_train,
++        train_stats = train_one_epoch_m2dx(
++            model, teacher_model, data_loader_train,
              optimizer, device, epoch, loss_scaler,
 +            partial(ema_decay_sched, total_steps=len(data_loader_train) * args.epochs,
 +                ema_decay_init=args.ema_decay_init, ema_decay=args.ema_decay),
++            val_loader=data_loader_val,
              log_writer=log_writer,
++            do_analysis=(epoch1 % args.feature_eval_freq == 0),
++            autocast_args=dict(dtype=torch.bfloat16) if args.bf16 else {},
              args=args
          )
 -        if args.output_dir and (epoch % 20 == 0 or epoch + 1 == args.epochs):
++
 +        if args.output_dir and (epoch1 % args.save_freq == 0 or epoch1 == args.epochs):
              misc.save_model(
                  args=args, model=model, model_without_ddp=model_without_ddp, optimizer=optimizer,
 -                loss_scaler=loss_scaler, epoch=epoch)
 +                loss_scaler=loss_scaler, epoch=epoch1)
-+            # visualize reconstructions
-+            out_dir = Path(args.output_dir)/str(epoch1)
-+            visualize_reconstruction(args, device, model_without_ddp, out_dir)
 +            # run the external evaluator
 +            if args.eval_after <= epoch1 and epoch1 < args.epochs and misc.is_main_process():
 +                abspath = Path(f'{args.output_dir}/checkpoint-{epoch1}.pth').absolute()
@@ -280,7 +334,7 @@
  
          log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
                          'epoch': epoch,}
-@@ -207,15 +287,42 @@
+@@ -207,15 +316,71 @@
                  log_writer.flush()
              with open(os.path.join(args.output_dir, "log.txt"), mode="a", encoding="utf-8") as f:
                  f.write(json.dumps(log_stats) + "\n")
@@ -299,9 +353,35 @@
 +    if misc.is_main_process():
 +        abspath = Path(f'{args.output_dir}/checkpoint-{epoch1}.pth').absolute()
 +        subprocess.call(['/bin/bash', './all_eval.sh', abspath])
++    return epoch1
 +
++
++arg_conf_defaults = {
++    'csv_main': ('data/files_audioset.csv', 'M', 'path'),
++    'csv_bg_noise': ('', 'D', 'path'),
++    'ema_decay_init': (0.99995, 'ema', 'z'),
++    'ema_decay': (0.99999, 'ed', 'z'),
++    'decoder_depth': (8, 'dd', 'asis'),
++    'mask_ratio': (0.7, 'mr', 'z'),
++    'seed': (0, 's', 'asis'),
++    'norm_pix_loss':  (True, '~N', 'b'),
++    'loss_fn': ('norm_mse', 'L', 'head'),
++    'optim': ('adamw', 'O', 'asis'),
++    'warmup_epochs': (20, 'wu', 'asis'),
++    'blr': (-1, 'blr', 'z'),  # default: 3e-4
++    'lr': (None, 'lr', 'z'),
++    'eff_batch_size': (2048, 'bs', 'asis'),
++    'accum_iter': (1, 'a', 'asis'),
++    'loss_m2d': (1.0, 'lm', 'z'),
++    'loss_off': (0.0, 'lo', 'z'),
++    'noise_ratio': (0.0, 'nr', 'z'),
++    'min_ds_size': (10000, 'dn', 'asis'),
++    'epochs': (0, '-e', 'asis'),
++}
  
- if __name__ == '__main__':
+-if __name__ == '__main__':
++
++def complete_args():
      args = get_args_parser()
      args = args.parse_args()
 -    if args.output_dir:
@@ -309,24 +389,28 @@
 +    _input_size, _patch_size = args.input_size, args.patch_size
 +    args.input_size = [int(x) for x in args.input_size.split('x')]
 +    args.patch_size = [int(x) for x in args.patch_size.split('x')]
++    args.norm_stats = eval(args.norm_stats) if args.norm_stats else None
 +
 +    misc.init_distributed_mode(args)
 +
 +    args.eff_batch_size = args.batch_size * args.accum_iter * misc.get_world_size()
 +
 +    if not args.output_dir:
-+        args.output_dir = f'{args.model}-{_input_size}p{_patch_size}'
-+        args.output_dir += f'-{common.get_timestamp()[:6]}-{common.arg_conf_str(args)}'
++        args.output_dir = f'{args.model}-{_input_size}p{_patch_size}p{args.sr}'
++        args.output_dir += f'-{common.get_timestamp()[:6]}-{common.arg_conf_str(args, defaults=arg_conf_defaults)}'
 +
-+    args.norm_stats = eval(args.norm_stats) if args.norm_stats else None
 +    if not args.log_dir:
 +        args.log_dir = args.output_dir
 +    args.target_layers = None if args.target_layers == '' else eval(args.target_layers)
++    return args
 +
++
++if __name__ == '__main__':
++    args = complete_args()
 +    Path(args.output_dir).mkdir(parents=True, exist_ok=True)
      main(args)
---- _org/train_speech.py	2023-03-22 07:24:53.599768153 +0900
-+++ train_speech.py	2023-08-02 21:07:42.805879563 +0900
+--- _org/train_speech.py	2024-03-25 20:02:30.881776628 +0900
++++ train_speech.py	2024-02-16 09:59:27.022893541 +0900
 @@ -1,3 +1,9 @@
 +"""M2D-S Pre-training Script
 +
@@ -337,7 +421,7 @@
  # Copyright (c) Meta Platforms, Inc. and affiliates.
  # All rights reserved.
  
-@@ -15,69 +21,99 @@
+@@ -15,69 +21,102 @@
  import os
  import time
  from pathlib import Path
@@ -380,6 +464,7 @@
                          help='Accumulate gradient iterations (for increasing the effective batch size under memory constraints)')
 +    parser.add_argument('--eval_after', default=500, type=int)
 +    parser.add_argument('--save_freq', default=500, type=int)
++    parser.add_argument('--eval_freq', default=10, type=int, help='Feature label-free evaluation frequency.')
 +    parser.add_argument('--stop_at', default=-1, type=int)
  
      # Model parameters
@@ -443,6 +528,8 @@
 +                        help='A CSV file to list sample files in the main dataset')
 +    parser.add_argument('--csv_bg_noise', default='data/files_audioset.csv', type=str,
 +                        help='A CSV file to list sample files in the BG noise dataset')
++    parser.add_argument('--csv_val', default='', type=str,
++                        help='A CSV file to list validation sample files')
 +    parser.add_argument('--norm_stats', default='None', type=str,  # Will be computed runtime.
 +                        help='dataset normalization stats')
 +    parser.add_argument('--noise_ratio', default=0.2, type=float,
@@ -458,16 +545,18 @@
                          help='path where to tensorboard log')
      parser.add_argument('--device', default='cuda',
                          help='device to use for training / testing')
-@@ -87,6 +123,8 @@
+@@ -87,7 +126,9 @@
  
      parser.add_argument('--start_epoch', default=0, type=int, metavar='N',
                          help='start epoch')
+-    parser.add_argument('--num_workers', default=10, type=int)
 +    parser.add_argument('--force_start_epoch', default=-1, type=int, metavar='N',
 +                        help='start epoch for resuming')
-     parser.add_argument('--num_workers', default=10, type=int)
++    parser.add_argument('--num_workers', default=8, type=int)
      parser.add_argument('--pin_mem', action='store_true',
                          help='Pin CPU memory in DataLoader for more efficient (sometimes) transfer to GPU.')
-@@ -104,9 +142,46 @@
+     parser.add_argument('--no_pin_mem', action='store_false', dest='pin_mem')
+@@ -104,9 +145,46 @@
      return parser
  
  
@@ -516,7 +605,7 @@
      print('job dir: {}'.format(os.path.dirname(os.path.realpath(__file__))))
      print("{}".format(args).replace(', ', ',\n'))
  
-@@ -119,13 +194,7 @@
+@@ -119,13 +197,7 @@
  
      cudnn.benchmark = True
  
@@ -527,11 +616,11 @@
 -            transforms.ToTensor(),
 -            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])])
 -    dataset_train = datasets.ImageFolder(os.path.join(args.data_path, 'train'), transform=transform_train)
-+    dataset_train = audio_speech_dataset.build_mixed_speech_dataset(args)
++    dataset_train, dataset_val = audio_speech_dataset.build_mixed_speech_dataset(args)
      print(dataset_train)
  
      if True:  # args.distributed:
-@@ -143,6 +212,8 @@
+@@ -143,6 +215,8 @@
          log_writer = SummaryWriter(log_dir=args.log_dir)
      else:
          log_writer = None
@@ -540,9 +629,21 @@
  
      data_loader_train = torch.utils.data.DataLoader(
          dataset_train, sampler=sampler_train,
-@@ -153,51 +224,66 @@
+@@ -151,53 +225,83 @@
+         pin_memory=args.pin_mem,
+         drop_last=True,
      )
-     
+-    
++
++    # for validation loss
++    if args.csv_val != '':
++        sampler_val = torch.utils.data.DistributedSampler(dataset_val, num_replicas=num_tasks, rank=global_rank, shuffle=False)
++        print("Sampler_val = %s" % str(sampler_val))
++        data_loader_val = torch.utils.data.DataLoader(dataset_val, sampler=sampler_val, batch_size=args.batch_size,
++            num_workers=args.num_workers//2, pin_memory=args.pin_mem, drop_last=False)
++    else:
++        data_loader_val = None
++
      # define the model
 -    model = models_mae.__dict__[args.model](norm_pix_loss=args.norm_pix_loss)
 +    model = models_mae.__dict__[args.model](img_size=args.input_size, patch_size=args.patch_size, decoder_depth=args.decoder_depth,
@@ -551,8 +652,7 @@
      model.to(device)
  
      model_without_ddp = model
--    print("Model = %s" % str(model_without_ddp))
-+    print("Model = %s" % common.short_model_desc(model_without_ddp))
+     print("Model = %s" % str(model_without_ddp))
  
 -    eff_batch_size = args.batch_size * args.accum_iter * misc.get_world_size()
 -    
@@ -577,7 +677,11 @@
      # following timm: set wd as 0 for bias and norm layers
 -    param_groups = optim_factory.add_weight_decay(model_without_ddp, args.weight_decay)
 -    optimizer = torch.optim.AdamW(param_groups, lr=args.lr, betas=(0.9, 0.95))
-+    param_groups = optim_factory.add_weight_decay(model_without_ddp, args.weight_decay) ## param_groups_weight_decay() for future timm
++    try:
++        param_groups = optim_factory.add_weight_decay(model_without_ddp, args.weight_decay)
++    except:
++        print(' (for compatibility with timm) Switched add_weight_decay() to param_groups_weight_decay()')
++        param_groups = optim_factory.param_groups_weight_decay(model_without_ddp, args.weight_decay)
 +    optimizer = get_optim(args, param_groups)
      print(optimizer)
      loss_scaler = NativeScaler()
@@ -600,7 +704,9 @@
              optimizer, device, epoch, loss_scaler,
 +            partial(ema_decay_sched, total_steps=len(data_loader_train) * args.epochs,
 +                ema_decay_init=args.ema_decay_init, ema_decay=args.ema_decay),
++            val_loader=data_loader_val,
              log_writer=log_writer,
++            do_analysis=(epoch1 % args.eval_freq == 0),
              args=args
          )
 -        if args.output_dir and (epoch % 20 == 0 or epoch + 1 == args.epochs):
@@ -620,7 +726,7 @@
  
          log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
                          'epoch': epoch,}
-@@ -207,15 +293,63 @@
+@@ -207,15 +311,63 @@
                  log_writer.flush()
              with open(os.path.join(args.output_dir, "log.txt"), mode="a", encoding="utf-8") as f:
                  f.write(json.dumps(log_stats) + "\n")
@@ -642,8 +748,8 @@
 +
 +
 +arg_conf_defaults = {
-+    'csv_main': ('data/files_ls960_hybrid.csv', 'M', 'path'),
-+    'csv_bg_noise': ('data/files_audioset.csv', 'D', 'path'),
++    'csv_main': ('', 'M', 'path'),  # data/files_ls960_hybrid.csv
++    'csv_bg_noise': ('', 'D', 'path'),  # data/files_audioset.csv
 +    'ema_decay_init': (0.99995, 'ema', 'z'),
 +    'ema_decay': (0.99999, 'ed', 'z'),
 +    'decoder_depth': (8, 'dd', 'asis'),
@@ -686,9 +792,21 @@
 +
 +    Path(args.output_dir).mkdir(parents=True, exist_ok=True)
      main(args)
---- _org/util/misc.py	2023-03-22 07:24:53.599768153 +0900
-+++ util/misc.py	2023-02-02 17:55:33.879813135 +0900
-@@ -312,7 +312,7 @@
+--- _org/util/misc.py	2023-07-07 10:22:30.225586716 +0900
++++ util/misc.py	2023-09-22 17:24:28.791494691 +0900
+@@ -18,7 +18,10 @@
+ 
+ import torch
+ import torch.distributed as dist
+-from torch._six import inf
++try:
++    from torch._six import inf
++except:
++    from torch import inf
+ 
+ 
+ class SmoothedValue(object):
+@@ -312,7 +315,7 @@
          model.save_checkpoint(save_dir=args.output_dir, tag="checkpoint-%s" % epoch_name, client_state=client_state)
  
  
@@ -697,7 +815,7 @@
      if args.resume:
          if args.resume.startswith('https'):
              checkpoint = torch.hub.load_state_dict_from_url(
-@@ -323,7 +323,7 @@
+@@ -323,7 +326,7 @@
          print("Resume checkpoint %s" % args.resume)
          if 'optimizer' in checkpoint and 'epoch' in checkpoint and not (hasattr(args, 'eval') and args.eval):
              optimizer.load_state_dict(checkpoint['optimizer'])
@@ -706,14 +824,69 @@
              if 'scaler' in checkpoint:
                  loss_scaler.load_state_dict(checkpoint['scaler'])
              print("With optim & sched!")
---- _org/m2d/engine_pretrain_m2d.py	2023-03-22 07:24:53.595768153 +0900
-+++ m2d/engine_pretrain_m2d.py	2023-08-02 14:31:32.714106252 +0900
-@@ -20,6 +20,95 @@
+--- _org/m2d/engine_pretrain_m2d.py	2023-07-07 10:22:30.217586685 +0900
++++ m2d/engine_pretrain_m2d.py	2024-03-25 18:32:35.318239755 +0900
+@@ -16,12 +16,156 @@
+ 
+ import util.misc as misc
+ import util.lr_sched as lr_sched
++from util.analyze_repr import get_cumulative_explained_variance_auc, rank_me
++from einops import rearrange
++
++
++def evaluate_feature(data_loader_train, data_loader_val, device, model, n_samples=1000):
++    embs = []
++    with torch.no_grad():
++        for batch in data_loader_train:  # sample only or (mixed, clean) or (sample, label)
++            if isinstance(batch, (list, tuple)):
++                if batch[1].shape == batch[0].shape:
++                    batch = batch[1]  # clean from (mixed, clean)
++                else:
++                    batch = batch[0]  # sample from (sample, label)
++            sample = batch.to(device, non_blocking=True)
++            B = sample.shape[0]
++            _model = model if hasattr(model, 'forward_encoder') else model.module
++            x, *_ = _model.forward_encoder(sample, mask_ratio=0.0)
++
++            x = x[:, 1:]   # remove CLS
++            x = rearrange(x, 'b l d -> (b l) d')
++            embs.append(x)
++            if B * len(embs) > n_samples:
++                break # print(f'Stopped loading samples ({B*len(embs)}) > {n_samples}.')
++    embs = torch.vstack(embs)
++    n_actual_features = embs.shape[0]
++    rank = rank_me(embs).cpu()
++    auc = get_cumulative_explained_variance_auc(embs).cpu()
++
++    val_message, val_rank, val_auc, embs = '', -1., -1., []
++    if data_loader_val is not None:
++        with torch.no_grad():
++            for sample in data_loader_val:
++                sample = sample.to(device, non_blocking=True)
++                x, *_ = _model.forward_encoder(sample, mask_ratio=0.0)
++
++                x = x[:, 1:]   # remove CLS
++                x = rearrange(x, 'b l d -> (b l) d')
++                embs.append(x)
++                if B * len(embs) > n_samples:
++                    break # print(f'Stopped loading samples ({B*len(embs)}) > {n_samples}.')
++        embs = torch.vstack(embs)
++        n_val_features = embs.shape[0]
++        val_rank = rank_me(embs).cpu()
++        val_auc = get_cumulative_explained_variance_auc(embs).cpu()
++        val_message = f', val_rank={val_rank:.1f} val_auc={val_auc:.5f} ({n_val_features} features)'
++
++    print(f'effective rank={rank:.1f} train_auc={auc:.5f} ({n_actual_features} features)' + val_message)
++    return rank, auc, val_rank, val_auc
+ 
  
  def train_one_epoch(model: torch.nn.Module,
                      data_loader: Iterable, optimizer: torch.optim.Optimizer,
 +                    device: torch.device, epoch: int, loss_scaler, ema_shceduler,
 +                    log_writer=None,
++                    val_loader: Iterable=None,
++                    do_analysis: bool=False,
++                    autocast_args: dict={},
 +                    args=None):
 +    model.train(True)
 +    metric_logger = misc.MetricLogger(delimiter="  ")
@@ -737,11 +910,9 @@
 +
 +        if isinstance(samples, (list, tuple)):
 +            (samples, targs) = samples
-+            if args.swap_inputs:
-+                samples, targs = targs, samples
 +        samples = samples.to(device, non_blocking=True)
 +
-+        with torch.cuda.amp.autocast():
++        with torch.cuda.amp.autocast(**autocast_args):
 +            if args.model.startswith('m2d_vit'):
 +                loss, *_ = model(samples, mask_ratio=args.mask_ratio)
 +            elif args.model.startswith('m2d_s_vit'):
@@ -758,7 +929,7 @@
 +
 +        is_update_grad = (data_iter_step + 1) % accum_iter == 0
 +        loss = loss / accum_iter
-+        loss_scaler(loss, optimizer, parameters=model.parameters(), update_grad=is_update_grad)
++        loss_scaler(loss, optimizer, parameters=model.parameters(), clip_grad=args.clip_grad, update_grad=is_update_grad)
 +        if is_update_grad:
 +            optimizer.zero_grad()
 +
@@ -768,10 +939,8 @@
 +        global_step = len(data_loader) * epoch + data_iter_step
 +        ema_decay = ema_shceduler(global_step)
 +        if is_update_grad:
-+            if hasattr(model, 'update_target_network'):
-+                model.update_target_network(ema_decay)
-+            else:
-+                model.module.update_target_network(ema_decay) # distributed
++            _model = model if hasattr(model, 'update_target_network') else model.module
++            _model.update_target_network(ema_decay)
 +
 +        metric_logger.update(loss=loss_value)
 +        if args.model.startswith('m2d_s_vit'):
@@ -791,6 +960,11 @@
 +            log_writer.add_scalar('lr', lr, epoch_1000x)
 +            log_writer.add_scalar('ema_decay', ema_decay, epoch_1000x)
 +
++    # feature analysis
++    rank, auc, val_rank, val_auc = evaluate_feature(data_loader, val_loader, device, model) if do_analysis else (-1., -1., -1., -1.)
++    metric_logger.update(rank=float(rank), auc=float(auc))
++    if val_loader is not None:
++        metric_logger.update(val_rank=float(val_rank), val_auc=float(val_auc))
 +
 +    # gather the stats from all processes
 +    metric_logger.synchronize_between_processes()
@@ -803,8 +977,13 @@
 +                    data_loader: Iterable, optimizer: torch.optim.Optimizer,
                      device: torch.device, epoch: int, loss_scaler,
                      log_writer=None,
++                    val_loader: Iterable=None,
++                    do_analysis: bool=False,
++                    autocast_args: dict={},
                      args=None):
-@@ -36,7 +125,7 @@
+     model.train(True)
+     metric_logger = misc.MetricLogger(delimiter="  ")
+@@ -36,15 +180,17 @@
      if log_writer is not None:
          print('log_dir: {}'.format(log_writer.log_dir))
  
@@ -813,24 +992,180 @@
  
          # we use a per iteration (instead of per epoch) lr scheduler
          if data_iter_step % accum_iter == 0:
-@@ -53,7 +142,7 @@
+             lr_sched.adjust_learning_rate(optimizer, data_iter_step / len(data_loader) + epoch, args)
+ 
++        if isinstance(samples, (list, tuple)):
++            (samples, targs) = samples
+         samples = samples.to(device, non_blocking=True)
+ 
+-        with torch.cuda.amp.autocast():
++        with torch.cuda.amp.autocast(**autocast_args):
+             loss, _, _ = model(samples, mask_ratio=args.mask_ratio)
+ 
+         loss_value = loss.item()
+@@ -53,8 +199,9 @@
              print("Loss is {}, stopping training".format(loss_value))
              sys.exit(1)
  
 -        loss /= accum_iter
 +        loss = loss / accum_iter
          loss_scaler(loss, optimizer, parameters=model.parameters(),
++                    clip_grad=args.clip_grad,
                      update_grad=(data_iter_step + 1) % accum_iter == 0)
          if (data_iter_step + 1) % accum_iter == 0:
-@@ -79,4 +168,4 @@
+             optimizer.zero_grad()
+@@ -75,8 +222,147 @@
+             log_writer.add_scalar('train_loss', loss_value_reduce, epoch_1000x)
+             log_writer.add_scalar('lr', lr, epoch_1000x)
+ 
++    # validation loss
++    if val_loader is not None:
++        model.eval()
++        N_TOTAL_VAL = 2048  # Total number of validation samples -- keep it small to train faster.
++        N_DL = len(val_loader)
++        N_VAL = max(1, (N_TOTAL_VAL + N_DL - 1)//N_DL)
++        for sample in val_loader:
++            sample = sample[torch.randperm(sample.shape[0])[:N_VAL]]  # random sample N_VAL items.
++            sample = sample.to(device, non_blocking=True)
++            with torch.cuda.amp.autocast(**autocast_args):
++                with torch.no_grad():
++                    loss, *_ = model(sample, mask_ratio=args.mask_ratio)
++                    metric_logger.update(val_loss=loss.item())
++
++    # feature analysis
++    rank, auc, val_rank, val_auc = evaluate_feature(data_loader, val_loader, device, model) if do_analysis else (-1., -1., -1., -1.)
++    metric_logger.update(rank=float(rank), auc=float(auc))
++    if val_loader is not None:
++        metric_logger.update(val_rank=float(val_rank), val_auc=float(val_auc))
++
++    # gather the stats from all processes
++    metric_logger.synchronize_between_processes()
++    print("Averaged stats:", metric_logger)
++    return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
++
++
++def train_one_epoch_m2dx(model: torch.nn.Module, teacher_model: torch.nn.Module,
++                    data_loader: Iterable, optimizer: torch.optim.Optimizer,
++                    device: torch.device, epoch: int, loss_scaler, ema_shceduler,
++                    log_writer=None,
++                    val_loader: Iterable=None,
++                    do_analysis: bool=False,
++                    autocast_args: dict={},
++                    args=None):
++    """M2D-X training loop."""
++    if teacher_model is not None: teacher_model.eval()
++    model.train(True)
++    _model = model if hasattr(model, 'update_target_network') else model.module
++    metric_logger = misc.MetricLogger(delimiter="  ")
++    metric_logger.add_meter('lr', misc.SmoothedValue(window_size=1, fmt='{value:.6f}'))
++    metric_logger.add_meter('ema_decay', misc.SmoothedValue(window_size=1, fmt='{value:.6f}'))
++    header = 'Epoch: [{}]'.format(epoch)
++    print_freq = 20
++
++    use_offline_target = model.use_offline_target if hasattr(model, 'use_offline_target') else model.module.use_offline_target
++    accum_iter = args.accum_iter
++
++    optimizer.zero_grad()
++
++    if log_writer is not None:
++        print('log_dir: {}'.format(log_writer.log_dir))
++
++    for data_iter_step, samples in enumerate(metric_logger.log_every(data_loader, print_freq, header)):
++
++        # we use a per iteration (instead of per epoch) lr scheduler
++        if data_iter_step % accum_iter == 0:
++            lr_sched.adjust_learning_rate(optimizer, data_iter_step / len(data_loader) + epoch, args)
++
++        x_online, x_target = samples[0].to(device, non_blocking=True), samples[1].to(device, non_blocking=True)
++
++        with torch.cuda.amp.autocast(**autocast_args):
++            if teacher_model is None:
++                loss, *others = model(x_online, x_target, mask_ratio=args.mask_ratio) if use_offline_target else model(x_online, mask_ratio=args.mask_ratio)
++                try:
++                    _, (_, _, loss_online, loss_offline) = others
++                except:
++                    loss_online, loss_offline = loss, None
++            else:
++                with torch.no_grad():
++                    z_target = teacher_model.encode_lms(x_target)
++                loss, _, (_, _, loss_online, loss_offline) = model(x_online, z_target, mask_ratio=args.mask_ratio)
++
++        loss_value = loss.item()
++
++        if not math.isfinite(loss_value):
++            print("Loss is {}, stopping training".format(loss_value))
++            sys.exit(1)
++
++        is_update_grad = (data_iter_step + 1) % accum_iter == 0
++        loss = loss / accum_iter
++        loss_scaler(loss, optimizer, parameters=model.parameters(), clip_grad=args.clip_grad, update_grad=is_update_grad)
++        if is_update_grad:
++            optimizer.zero_grad()
++
++        torch.cuda.synchronize()
++
++        # Update target network
++        global_step = len(data_loader) * epoch + data_iter_step
++        ema_decay = ema_shceduler(global_step)
++        if is_update_grad:
++            _model.update_target_network(ema_decay)
++
++        metric_logger.update(loss=loss_value)
++        if loss_offline is not None:
++            metric_logger.update(l_on=loss_online, l_off=loss_offline)
++
++        lr = optimizer.param_groups[0]["lr"]
++        metric_logger.update(lr=lr)
++        metric_logger.update(ema_decay=ema_decay)
++
++        loss_value_reduce = misc.all_reduce_mean(loss_value)
++        if log_writer is not None and (data_iter_step + 1) % accum_iter == 0:
++            """ We use epoch_1000x as the x-axis in tensorboard.
++            This calibrates different curves when batch size changes.
++            """
++            epoch_1000x = int((data_iter_step / len(data_loader) + epoch) * 1000)
++            log_writer.add_scalar('train_loss', loss_value_reduce, epoch_1000x)
++            log_writer.add_scalar('lr', lr, epoch_1000x)
++            log_writer.add_scalar('ema_decay', ema_decay, epoch_1000x)
++
++    # validation loss
++    if val_loader is not None:
++        if teacher_model is not None: teacher_model.eval()
++        model.eval()
++        N_TOTAL_VAL = 2048  # Total number of validation samples -- keep it small to train faster.
++        N_DL = len(val_loader)
++        N_VAL = max(1, (N_TOTAL_VAL + N_DL - 1)//N_DL)
++        for sample in val_loader:
++            sample = sample[torch.randperm(sample.shape[0])[:N_VAL]]  # random sample N_VAL items.
++            sample = sample.to(device, non_blocking=True)
++            with torch.cuda.amp.autocast(**autocast_args):
++                with torch.no_grad():
++                    if teacher_model is None:
++                        loss, *others = model(sample, None, mask_ratio=args.mask_ratio) if use_offline_target else model(sample, mask_ratio=args.mask_ratio)
++                        try:
++                            _, (_, _, loss_online, loss_offline) = others
++                            metric_logger.update(val_loss=loss.item(), val_l_on = loss_online.item(), val_l_off=loss_offline.item())
++                        except:
++                            metric_logger.update(val_loss=loss.item())
++                    else:
++                        z_target = teacher_model.encode_lms(sample)
++                        loss, _, (_, _, loss_online, loss_offline) = model(sample, z_target, mask_ratio=args.mask_ratio)
++                        metric_logger.update(val_loss=loss.item(), val_l_on = loss_online.item(), val_l_off=loss_offline.item())
++
++    # feature analysis
++    rank, auc, val_rank, val_auc = evaluate_feature(data_loader, val_loader, device, model) if do_analysis else (-1., -1., -1., -1.)
++    metric_logger.update(rank=float(rank), auc=float(auc))
++    if val_loader is not None:
++        metric_logger.update(val_rank=float(val_rank), val_auc=float(val_auc))
+ 
      # gather the stats from all processes
      metric_logger.synchronize_between_processes()
      print("Averaged stats:", metric_logger)
 -    return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
 \ ファイル末尾に改行がありません
 +    return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
---- _org/m2d/models_mae.py	2023-03-22 07:24:53.595768153 +0900
-+++ m2d/models_mae.py	2023-08-03 10:33:27.969418508 +0900
+--- _org/m2d/models_mae.py	2023-07-07 10:22:30.217586685 +0900
++++ m2d/models_mae.py	2024-03-25 18:32:35.318239755 +0900
 @@ -9,14 +9,83 @@
  # DeiT: https://github.com/facebookresearch/deit
  # --------------------------------------------------------
@@ -917,16 +1252,20 @@
  
  
  class MaskedAutoencoderViT(nn.Module):
-@@ -27,6 +96,8 @@
+@@ -25,8 +94,11 @@
+     def __init__(self, img_size=224, patch_size=16, in_chans=3,
+                  embed_dim=1024, depth=24, num_heads=16,
                   decoder_embed_dim=512, decoder_depth=8, decoder_num_heads=16,
-                  mlp_ratio=4., norm_layer=nn.LayerNorm, norm_pix_loss=False):
+-                 mlp_ratio=4., norm_layer=nn.LayerNorm, norm_pix_loss=False):
++                 mlp_ratio=4., norm_layer=nn.LayerNorm, norm_pix_loss=False, norm_stats=None):
          super().__init__()
 +        self.in_chans = in_chans
 +        img_size, patch_size = expand_size(img_size), expand_size(patch_size)
++        self.norm_stats = nn.Parameter(torch.tensor([-7.1, 4.2] if norm_stats is None else norm_stats), requires_grad=False)
  
          # --------------------------------------------------------------------------
          # MAE encoder specifics
-@@ -37,7 +108,7 @@
+@@ -37,7 +109,7 @@
          self.pos_embed = nn.Parameter(torch.zeros(1, num_patches + 1, embed_dim), requires_grad=False)  # fixed sin-cos embedding
  
          self.blocks = nn.ModuleList([
@@ -935,7 +1274,7 @@
              for i in range(depth)])
          self.norm = norm_layer(embed_dim)
          # --------------------------------------------------------------------------
-@@ -51,24 +122,50 @@
+@@ -51,24 +123,50 @@
          self.decoder_pos_embed = nn.Parameter(torch.zeros(1, num_patches + 1, decoder_embed_dim), requires_grad=False)  # fixed sin-cos embedding
  
          self.decoder_blocks = nn.ModuleList([
@@ -953,7 +1292,7 @@
 +        print(f'{self.__class__.__name__}(in_chans={self.in_chans}, patch size={self.patch_size()}, grid_size={self.grid_size()},\n'
 +              f'  embed_dim={embed_dim}, depth={depth}, num_heads={num_heads}, decoder_embed_dim={decoder_embed_dim},\n'
 +              f'  decoder_depth={decoder_depth}, decoder_num_heads={decoder_num_heads}, mlp_ratio={mlp_ratio},\n'
-+              f'  norm_pix_loss={norm_pix_loss})')
++              f'  norm_pix_loss={norm_pix_loss}, norm_stats={self.norm_stats})')
 +
          self.initialize_weights()
  
@@ -990,7 +1329,7 @@
          self.decoder_pos_embed.data.copy_(torch.from_numpy(decoder_pos_embed).float().unsqueeze(0))
  
          # initialize patch_embed like nn.Linear (instead of nn.Conv2d)
-@@ -94,46 +191,63 @@
+@@ -94,46 +192,63 @@
  
      def patchify(self, imgs):
          """
@@ -1076,7 +1415,7 @@
  
          # keep the first subset
          ids_keep = ids_shuffle[:, :len_keep]
-@@ -147,15 +261,22 @@
+@@ -147,15 +262,22 @@
  
          return x_masked, mask, ids_restore
  
@@ -1102,7 +1441,7 @@
  
          # append cls token
          cls_token = self.cls_token + self.pos_embed[:, :1, :]
-@@ -163,12 +284,31 @@
+@@ -163,12 +285,31 @@
          x = torch.cat((cls_tokens, x), dim=1)
  
          # apply Transformer blocks
@@ -1134,7 +1473,7 @@
      def forward_decoder(self, x, ids_restore):
          # embed tokens
          x = self.decoder_embed(x)
-@@ -197,8 +337,8 @@
+@@ -197,8 +338,8 @@
  
      def forward_loss(self, imgs, pred, mask):
          """
@@ -1145,7 +1484,7 @@
          mask: [N, L], 0 is keep, 1 is remove, 
          """
          target = self.patchify(imgs)
-@@ -208,6 +348,9 @@
+@@ -208,6 +349,9 @@
              target = (target - mean) / (var + 1.e-6)**.5
  
          loss = (pred - target) ** 2
@@ -1155,7 +1494,7 @@
          loss = loss.mean(dim=-1)  # [N, L], mean loss per patch
  
          loss = (loss * mask).sum() / mask.sum()  # mean loss on removed patches
-@@ -219,6 +362,17 @@
+@@ -219,6 +363,17 @@
          loss = self.forward_loss(imgs, pred, mask)
          return loss, pred, mask
  
@@ -1173,7 +1512,7 @@
  
  def mae_vit_base_patch16_dec512d8b(**kwargs):
      model = MaskedAutoencoderViT(
-@@ -248,3 +402,526 @@
+@@ -248,3 +403,636 @@
  mae_vit_base_patch16 = mae_vit_base_patch16_dec512d8b  # decoder: 512 dim, 8 blocks
  mae_vit_large_patch16 = mae_vit_large_patch16_dec512d8b  # decoder: 512 dim, 8 blocks
  mae_vit_huge_patch14 = mae_vit_huge_patch14_dec512d8b  # decoder: 512 dim, 8 blocks
@@ -1219,17 +1558,18 @@
 +    def __init__(self, img_size=224, patch_size=16, in_chans=3,
 +                 embed_dim=1024, depth=24, num_heads=16,
 +                 decoder_embed_dim=512, decoder_depth=8, decoder_num_heads=16,
-+                 mlp_ratio=4., norm_layer=nn.LayerNorm, norm_pix_loss=False,
++                 mlp_ratio=4., norm_layer=nn.LayerNorm, norm_pix_loss=False, norm_stats=None,
 +                 loss_type='norm_mse', target_layers=None, **kwargs):
 +        super().__init__(img_size=img_size, patch_size=patch_size, in_chans=in_chans,
 +                 embed_dim=embed_dim, depth=depth, num_heads=num_heads,
 +                 decoder_embed_dim=decoder_embed_dim, decoder_depth=decoder_depth, decoder_num_heads=decoder_num_heads,
-+                 mlp_ratio=mlp_ratio, norm_layer=norm_layer, norm_pix_loss=norm_pix_loss)
++                 mlp_ratio=mlp_ratio, norm_layer=norm_layer, norm_pix_loss=norm_pix_loss, norm_stats=norm_stats)
 +        self.loss_type = loss_type
 +        self.target_layers = target_layers
 +        print(f'+ loss_type={loss_type}, target_layers={target_layers}')
 +        if len(kwargs.keys()) > 0:
 +            print(' CAUTION: You set unknown arguments ->', kwargs)
++        self.use_offline_target = False
 +
 +        # --------------------------------------------------------------------------
 +        # Target encoder specifics
@@ -1468,7 +1808,7 @@
 +class M2D_D2ViT(M2DViT):
 +    """A data2vec-like M2D variant that feeds all patches to the target network."""
 +
-+    def random_masking(self, x, mask_ratio):
++    def random_masking(self, x, mask_ratio, adjust_short=False):
 +        """Random masking that returns all patches as the x_target.
 +
 +        Returns:
@@ -1477,7 +1817,7 @@
 +            mask: Mask
 +            ids_restore: indexes for restoration of masked patches
 +        """
-+        x_masked, _, mask, ids_restore = super().random_masking(x, mask_ratio)
++        x_masked, _, mask, ids_restore = super().random_masking(x, mask_ratio, adjust_short=adjust_short)
 +        return x_masked, x, mask, ids_restore
 +
 +    def forward(self, imgs, mask_ratio=0.75):
@@ -1519,7 +1859,10 @@
 +    """ Vision Transformer with support for global average pooling
 +    """
 +    def __init__(self, **kwargs):
++        norm_stats = kwargs['norm_stats'] if 'norm_stats' in kwargs else [-7.1, 4.2]
++        kwargs = {k:v for k, v in kwargs.items() if k not in ['decoder_depth', 'off_emb_dim', 'clip_args', 'norm_stats']}
 +        super().__init__(**kwargs)
++        self.norm_stats = nn.Parameter(torch.tensor(norm_stats), requires_grad=False)
 +        # Our positional encoding is constant
 +        pos_embed = get_2d_sincos_pos_embed(self.pos_embed.shape[-1], self.grid_size(), cls_token=True)
 +        self.pos_embed.data.copy_(torch.from_numpy(pos_embed).float().unsqueeze(0))
@@ -1642,7 +1985,7 @@
 +
 +
 +msm_mae_vit_base_encoder_only = m2d_vit_base_encoder_only
-+
++m2d_d2v_vit_base_encoder_only = m2d_vit_base_encoder_only
 +
 +# Masked Modeling Duo for Speech (M2D-S)
 +
@@ -1650,17 +1993,18 @@
 +    def __init__(self, img_size=224, patch_size=16, in_chans=3,
 +                 embed_dim=1024, depth=24, num_heads=16,
 +                 decoder_embed_dim=512, decoder_depth=8, decoder_num_heads=16,
-+                 mlp_ratio=4., norm_layer=nn.LayerNorm, norm_pix_loss=False,
++                 mlp_ratio=4., norm_layer=nn.LayerNorm, norm_pix_loss=False, norm_stats=None,
 +                 loss_type='norm_mse', target_layers=None,
 +                 loss_m2d=0.7, loss_off=0.3, off_emb_dim=768):
 +        super().__init__(img_size=img_size, patch_size=patch_size, in_chans=in_chans,
 +                 embed_dim=embed_dim, depth=depth, num_heads=num_heads,
 +                 decoder_embed_dim=decoder_embed_dim, decoder_depth=decoder_depth, decoder_num_heads=decoder_num_heads,
-+                 mlp_ratio=mlp_ratio, norm_layer=norm_layer, norm_pix_loss=norm_pix_loss,
++                 mlp_ratio=mlp_ratio, norm_layer=norm_layer, norm_pix_loss=norm_pix_loss, norm_stats=norm_stats,
 +                 loss_type=loss_type, target_layers=target_layers)
 +        self.loss_m2d = loss_m2d
 +        self.loss_off = loss_off
 +        print(f'+ loss_m2d={loss_m2d}, loss_off={loss_off}')
++        self.use_offline_target = True
 +
 +        F = self.grid_size()[0]
 +        self.offline_predictor = nn.Linear(F * embed_dim, off_emb_dim)
@@ -1700,8 +2044,113 @@
 +
 +
 +m2d_s_vit_base_encoder_only = m2d_vit_base_encoder_only
---- _org/m2d/pos_embed.py	2023-03-22 07:24:53.595768153 +0900
-+++ m2d/pos_embed.py	2023-07-03 19:29:44.313291700 +0900
++
++
++# Masked Modeling Duo for X (M2D-X)
++
++class M2D_X_ViT(M2DViT):
++    def __init__(self, img_size=224, patch_size=16, in_chans=3,
++                 embed_dim=1024, depth=24, num_heads=16,
++                 decoder_embed_dim=512, decoder_depth=8, decoder_num_heads=16,
++                 mlp_ratio=4., norm_layer=nn.LayerNorm, norm_pix_loss=False, norm_stats=None,
++                 loss_type='norm_mse', target_layers=None,
++                 loss_m2d=1.0, loss_off=0.0, off_emb_dim=3840, **kwargs):
++        super().__init__(img_size=img_size, patch_size=patch_size, in_chans=in_chans,
++                 embed_dim=embed_dim, depth=depth, num_heads=num_heads,
++                 decoder_embed_dim=decoder_embed_dim, decoder_depth=decoder_depth, decoder_num_heads=decoder_num_heads,
++                 mlp_ratio=mlp_ratio, norm_layer=norm_layer, norm_pix_loss=norm_pix_loss, norm_stats=norm_stats,
++                 loss_type=loss_type, target_layers=target_layers)
++        self.loss_m2d = loss_m2d
++        self.loss_off = loss_off
++        print(f'+ loss_m2d={loss_m2d}, loss_off={loss_off}')
++        self.use_offline_target = True
++
++        F = self.grid_size()[0]
++        self.offline_predictor = nn.Linear(F * embed_dim, off_emb_dim)
++
++        if len(kwargs) > 0:
++            print(f' **NOTE** ignored args: {kwargs}')
++
++    def forward(self, imgs, target_offline, mask_ratio=0.7):
++        # online
++        latent, x_targ, mask, ids_restore = self.forward_encoder(imgs, mask_ratio)
++        pred_online = self.forward_decoder(latent, ids_restore)  # [N, targL, D]
++        with torch.no_grad():
++            target_online = self.forward_target_encoder(x_targ)
++        loss_online = self.forward_loss(target_online, pred_online, self.norm_pix_loss, self.loss_type)
++
++        # offline
++        z_online = torch.cat([self.drop_cls_token(latent), pred_online], dim=1)  # gather all the online tokes
++        z_online = torch.gather(z_online, dim=1, index=ids_restore.unsqueeze(-1).repeat(1, 1, latent.shape[-1]))  # unshuffle
++        B, FT, D = z_online.shape
++        F = self.grid_size()[0]
++        T = FT // F
++        z_online = torch.einsum('bftd->btfd', z_online.reshape(B, F, T, D)).reshape(B, T, F * D)
++        pred_offline = self.offline_predictor(z_online)
++
++        if target_offline is None:
++            loss_offline = torch.zeros_like(loss_online)
++        else:
++            B, T2, D = target_offline.shape
++            assert T2 == T, f'label length {T2} != patch length'
++            loss_offline = self.forward_loss(target_offline, pred_offline, self.norm_pix_loss, self.loss_type)
++
++        loss = self.loss_m2d * loss_online + self.loss_off * loss_offline
++        return loss, pred_online, (ids_restore, mask, loss_online, loss_offline)
++
++    def forward_viz(self, imgs, mask_ratio=0.7):
++        latent, x_targ, mask, ids_restore = self.forward_encoder(imgs, mask_ratio)
++        return None, None, mask.reshape(mask.shape[0], *self.grid_size())  # only the mask to visualize
++
++
++def m2d_x_vit_base(patch_size=16, decoder_depth=8, in_chans=1, **kwargs): # for audio
++    model = M2D_X_ViT(
++        in_chans=in_chans, patch_size=patch_size, embed_dim=768, depth=12, num_heads=12,
++        decoder_embed_dim=512, decoder_depth=decoder_depth, decoder_num_heads=16,
++        mlp_ratio=4, norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
++    return model
++
++m2d_x_vit_base_encoder_only = m2d_vit_base_encoder_only
++
++
++## LARGE MODELS
++
++def m2d_vit_large(patch_size=16, decoder_depth=8, in_chans=1, **kwargs):
++    model = M2DViT(
++        in_chans=in_chans, patch_size=patch_size, embed_dim=1024, depth=24, num_heads=16,
++        decoder_embed_dim=512, decoder_depth=decoder_depth, decoder_num_heads=16,
++        mlp_ratio=4, norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
++    return model
++
++
++def m2d_x_vit_large(patch_size=16, decoder_depth=8, in_chans=1, **kwargs):
++    model = M2D_X_ViT(
++        in_chans=in_chans, patch_size=patch_size, embed_dim=1024, depth=24, num_heads=16,
++        decoder_embed_dim=512, decoder_depth=decoder_depth, decoder_num_heads=16,
++        mlp_ratio=4, norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
++    return model
++
++
++def msm_mae_vit_large(patch_size=16, decoder_depth=8, in_chans=1, **kwargs):
++    print(f'MSM-MAE **FORCED DEC DEPTH AS 4 (Your decoder_depth={decoder_depth} is ignored)**')
++    model = MaskedAutoencoderViT(
++        in_chans=in_chans, patch_size=patch_size, embed_dim=1024, depth=24, num_heads=16,
++        decoder_embed_dim=384, decoder_depth=4, decoder_num_heads=6,
++        mlp_ratio=4, norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
++    return model
++
++
++def m2d_vit_large_encoder_only(patch_size=16, in_chans=1, **kwargs):  # for audio, encoder only
++    model = M2DEncoderViT(
++        in_chans=in_chans, patch_size=patch_size, embed_dim=1024, depth=24, num_heads=16,
++        mlp_ratio=4, norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
++    return model
++
++
++m2d_x_vit_large_encoder_only = m2d_vit_large_encoder_only
++msm_mae_vit_large_encoder_only = m2d_vit_large_encoder_only
+--- _org/m2d/pos_embed.py	2023-07-07 10:22:30.217586685 +0900
++++ m2d/pos_embed.py	2023-07-07 10:22:30.229586731 +0900
 @@ -23,12 +23,13 @@
      return:
      pos_embed: [grid_size*grid_size, embed_dim] or [1+grid_size*grid_size, embed_dim] (w/ or w/o cls_token)
@@ -1728,8 +2177,8 @@
      omega /= embed_dim / 2.
      omega = 1. / 10000**omega  # (D/2,)
  
---- _org/m2d/timm_layers_pos_embed.py	2023-08-02 21:07:42.801879563 +0900
-+++ m2d/timm_layers_pos_embed.py	2023-08-02 21:41:53.057860010 +0900
+--- _org/m2d/timm_layers_pos_embed.py	2023-08-02 20:50:32.894880952 +0900
++++ m2d/timm_layers_pos_embed.py	2023-08-02 22:21:38.237502645 +0900
 @@ -9,8 +9,6 @@
  import torch
  import torch.nn.functional as F
@@ -1763,8 +2212,8 @@
      posemb = posemb.permute(0, 2, 3, 1).reshape(1, -1, embed_dim)
  
      # add back extra (class, etc) prefix tokens
---- _org/mae_train_audio.py	2023-03-22 07:24:53.599768153 +0900
-+++ mae_train_audio.py	2023-07-03 18:54:15.853304061 +0900
+--- _org/mae_train_audio.py	2023-07-07 10:22:30.225586716 +0900
++++ mae_train_audio.py	2024-03-25 19:07:49.243548273 +0900
 @@ -15,40 +15,45 @@
  import os
  import time
@@ -1927,16 +2376,20 @@
  
      eff_batch_size = args.batch_size * args.accum_iter * misc.get_world_size()
      
-@@ -176,7 +207,7 @@
+@@ -176,7 +207,11 @@
          model_without_ddp = model.module
      
      # following timm: set wd as 0 for bias and norm layers
 -    param_groups = optim_factory.add_weight_decay(model_without_ddp, args.weight_decay)
-+    param_groups = optim_factory.add_weight_decay(model_without_ddp, args.weight_decay) ## param_groups_weight_decay() for future timm
++    try:
++        param_groups = optim_factory.add_weight_decay(model_without_ddp, args.weight_decay)
++    except:
++        print(' (for compatibility with timm) Switched add_weight_decay() to param_groups_weight_decay()')
++        param_groups = optim_factory.param_groups_weight_decay(model_without_ddp, args.weight_decay)
      optimizer = torch.optim.AdamW(param_groups, lr=args.lr, betas=(0.9, 0.95))
      print(optimizer)
      loss_scaler = NativeScaler()
-@@ -186,6 +217,7 @@
+@@ -186,6 +221,7 @@
      print(f"Start training for {args.epochs} epochs")
      start_time = time.time()
      for epoch in range(args.start_epoch, args.epochs):
@@ -1944,7 +2397,7 @@
          if args.distributed:
              data_loader_train.sampler.set_epoch(epoch)
          train_stats = train_one_epoch(
-@@ -194,10 +226,17 @@
+@@ -194,10 +230,17 @@
              log_writer=log_writer,
              args=args
          )
@@ -1964,7 +2417,7 @@
  
          log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
                          'epoch': epoch,}
-@@ -212,10 +251,23 @@
+@@ -212,10 +255,23 @@
      total_time_str = str(datetime.timedelta(seconds=int(total_time)))
      print('Training time {}'.format(total_time_str))
  

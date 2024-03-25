@@ -49,6 +49,7 @@ curl -o util/lars.py https://raw.githubusercontent.com/facebookresearch/mae/efb2
 curl -o util/lr_decay.py https://raw.githubusercontent.com/facebookresearch/mae/efb2a8062c206524e35e47d04501ed4f544c0ae8/util/lr_decay.py
 curl -o util/lr_sched.py https://raw.githubusercontent.com/facebookresearch/mae/efb2a8062c206524e35e47d04501ed4f544c0ae8/util/lr_sched.py
 curl -o util/misc.py https://raw.githubusercontent.com/facebookresearch/mae/efb2a8062c206524e35e47d04501ed4f544c0ae8/util/misc.py
+curl -o util/analyze_repr.py https://raw.githubusercontent.com/daisukelab/general-learning/master/SSL/analyze_repr.py
 curl -o m2d/pos_embed.py https://raw.githubusercontent.com/facebookresearch/mae/efb2a8062c206524e35e47d04501ed4f544c0ae8/util/pos_embed.py
 curl -o train_audio.py https://raw.githubusercontent.com/facebookresearch/mae/efb2a8062c206524e35e47d04501ed4f544c0ae8/main_pretrain.py
 curl -o train_speech.py https://raw.githubusercontent.com/facebookresearch/mae/efb2a8062c206524e35e47d04501ed4f544c0ae8/main_pretrain.py
@@ -75,19 +76,16 @@ We have a utility runtime model utility, RuntimeM2D, that helps you to load a pr
 ```python
 from m2d.runtime_audio import RuntimeM2D
 
-device = torch.device('cpu')  # set 'cuda' if you run on a GPU
-
 # Prepare your batch of audios. This is a dummy  example of three 10s  waves.
 batch_audio = 2 * torch.rand((3, 10 * 16000)) - 1.0 # input range = [-1., 1]
 batch_audio = batch_audio.to(device)
 
 # Create a model with pretrained weights.
 runtime = RuntimeM2D(weight_file='m2d_vit_base-80x608p16x16-220930-mr7/checkpoint-300.pth')
-runtime = runtime.to(device)
 
 # Encode raw audio into features. `encode()` will do the followings automatically:
 # 1. Convert the input `batch_audio` to log-mel spectrograms (LMS).
-# 2. Normalize the batch LMS with mean and std calculated from the batch.
+# 2. Normalize the batch LMS with mean and std used in the pre-training.
 # 3. Encode the bach LMS to features.
 frame_level = runtime.encode(batch_audio)
 
@@ -99,31 +97,6 @@ print(frame_level.shape)
 # The `clip_level` will have a size of torch.Size([3, 3840])
 clip_level = torch.mean(frame_level, dim=1)
 print(clip_level.shape)
-```
-
-To get the best features, you can normalize your audio with normalization statistics of your entire input data and use them in your pipeline.
-
-```python
-# Calculate statistics in advance. This is an example with 10 random waves.
-means, stds = [], []
-for _ in range(10):
-    lms = runtime.to_feature(torch.rand((10 * 16000)).to(device))
-    means.append(lms.mean())
-    stds.append(lms.std())
-
-dataset_mean, dataset_std = torch.mean(torch.stack(means)), torch.mean(torch.stack(stds))
-# These can be numbers [-5.4919195, 5.0389895], for example.
-
-# The followings are an example pipeline.
-
-# Convert your batch audios into LMS.
-batch_lms = runtime.to_feature(batch_audio)
-# Normalize them.
-batch_lms = (batch_lms - dataset_mean) / (dataset_std + torch.finfo().eps)
-# Encode them to feame-level features.
-frame_level = runtime.encode_lms(batch_lms)
-#  Calculate clip-level features if needed.
-clip_level = torch.mean(frame_level, dim=1)
 ```
 
 To get features per layer, you can add `return_layers=True`.

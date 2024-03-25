@@ -152,3 +152,128 @@ def build_viz_dataset(cfg):
     norm_stats = cfg.norm_stats if 'norm_stats' in cfg else None
     ds = SpectrogramDataset(folder=cfg.data_path, files=files, crop_frames=cfg.input_size[1], tfms=None, norm_stats=norm_stats)
     return ds, files
+
+
+# Mixed dataset
+
+def log_mixup_exp(xa, xb, alpha):
+    xa = xa.exp()
+    xb = xb.exp()
+    x = alpha * xa + (1. - alpha) * xb
+    return torch.log(torch.max(x, torch.finfo(x.dtype).eps*torch.ones_like(x)))
+
+
+class MixedSpecDataset(torch.utils.data.Dataset):
+    def __init__(self, base_folder, files_main, files_bg_noise, crop_size, noise_ratio=0.0,
+                 random_crop=True, n_norm_calc=10000) -> None:
+        super().__init__()
+
+        self.ds1 = SpectrogramDataset(folder=base_folder, files=files_main, crop_frames=crop_size[1],
+                random_crop=random_crop, norm_stats=None,
+                n_norm_calc=n_norm_calc//2)
+        self.norm_stats = self.ds1.norm_stats  # for compatibility with SpectrogramDataset
+        # disable normalizion scaling in the ds1
+        self.norm_std = self.ds1.norm_stats[1]
+        self.ds1.norm_stats = (self.ds1.norm_stats[0], 1.0)
+
+        if noise_ratio > 0.0:
+            self.ds2 = SpectrogramDataset(folder=base_folder, files=files_bg_noise, crop_frames=crop_size[1],
+                    random_crop=random_crop, norm_stats=None, n_norm_calc=n_norm_calc//2, repeat_short=True)
+            self.ds2.norm_stats = (self.ds2.norm_stats[0], 1.0) # disable normalizion scaling in the ds2
+
+        self.noise_ratio = noise_ratio
+        self.bg_index = []
+
+    def __len__(self):
+        return len(self.ds1)
+
+    def __getitem__(self, index, fixed_noise=False):
+        # load index sample
+        clean = self.ds1[index]
+        if self.noise_ratio > 0.0:
+            # load random noise sample ### , while making noise floor zero
+            noise = self.ds2[index if fixed_noise else self.get_next_bgidx()]
+            # mix
+            mixed = log_mixup_exp(noise, clean, self.noise_ratio) if self.noise_ratio < 1.0 else noise
+        else:
+            mixed = clean.clone()
+        # finish normalization. clean and noise were averaged to zero. the following will scale to 1.0 using ds1 std.
+        clean = clean / self.norm_std
+        mixed = mixed / self.norm_std
+        return clean, mixed
+
+
+    def get_next_bgidx(self):
+        if len(self.bg_index) == 0:
+            self.bg_index = torch.randperm(len(self.ds2)).tolist()
+            # print(f'Refreshed the bg index list with {len(self.bg_index)} items: {self.bg_index[:5]}...')
+        return self.bg_index.pop(0)
+
+    def __repr__(self):
+        format_string = self.__class__.__name__ + f'(crop_frames={self.ds1.crop_frames}, '
+        format_string += f'folder_sp={self.ds1.df.file_name.values[0].split("/")[0]}, '
+        if self.noise_ratio > 0.: format_string += f'folder_bg={self.ds2.df.file_name.values[0].split("/")[0]}, '
+        return format_string
+
+
+def inflate_files(files, desired_size):
+    if len(files) == 0:
+        return files
+    files = list(files)  # make sure `files`` is a list
+    while len(files) < desired_size:
+        files = (files + files)[:desired_size]
+    return files
+
+
+def build_mixed_dataset(cfg):
+    """The followings configure the training dataset details.
+        - data_path: Root folder of the training dataset.
+        - dataset: The _name_ of the training dataset, an stem name of a `.csv` training data list.
+        - norm_stats: Normalization statistics, a list of [mean, std].
+        - input_size: Input size, a list of [# of freq. bins, # of time frames].
+    """
+
+    # get files and inflate the number of files (by repeating the list) if needed
+    files_main = get_files(cfg.csv_main)
+    files_bg = get_files(cfg.csv_bg_noise) if cfg.noise_ratio > 0. else []
+    desired_min_size = 0
+    if 'min_ds_size' in cfg and cfg.min_ds_size > 0:
+        desired_min_size = cfg.min_ds_size
+    if desired_min_size > 0:
+        old_sizes = len(files_main), len(files_bg)
+        files_main, files_bg = inflate_files(files_main, desired_min_size), inflate_files(files_bg, desired_min_size)
+        print('The numbers of data files are increased from', old_sizes, 'to', (len(files_main), len(files_bg)))
+
+    ds = MixedSpecDataset(
+        base_folder=cfg.data_path, files_main=files_main,
+        files_bg_noise=files_bg,
+        crop_size=cfg.input_size,
+        noise_ratio=cfg.noise_ratio,
+        random_crop=True)
+    if 'weighted' in cfg and cfg.weighted:
+        assert desired_min_size == 0
+        ds.weight = pd.read_csv(cfg.csv_main).weight.values
+
+    val_ds = SpectrogramDataset(folder=cfg.data_path, files=get_files(cfg.csv_val), crop_frames=cfg.input_size[1], random_crop=True) \
+        if cfg.csv_val else None
+
+    return ds, val_ds
+
+
+def build_mixed_viz_dataset(cfg):
+    files = [str(f).replace(str(cfg.data_path) + '/', '') for f in sorted(Path(cfg.data_path).glob('vis_samples/*.npy'))]
+    if len(files) == 0:
+        return None, []
+    norm_stats = cfg.norm_stats if 'norm_stats' in cfg else None
+    ds = SpectrogramDataset(folder=cfg.data_path, files=files, crop_frames=cfg.input_size[1], tfms=None, norm_stats=norm_stats)
+    return ds, files
+
+
+if __name__ == '__main__':
+    # Test
+    ds = MixedSpecDataset(base_folder='data', files_main=get_files('data/files_gtzan.csv'),
+                          files_bg_noise=get_files('data/files_audioset.csv'),
+                          crop_size=[80, 608], noise_ratio=0.2, random_crop=True, n_norm_calc=10)
+    for i in range(0, 10):
+        clean, mixed = ds[i]
+        print(clean.shape, mixed.shape)

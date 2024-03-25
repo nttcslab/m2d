@@ -1,11 +1,20 @@
 cd evar
-CUDA_VISIBLE_DEVICES=0 python 2pass_lineareval.py config/m2d.yaml cremad batch_size=16,weight_file=$1
-CUDA_VISIBLE_DEVICES=0 python 2pass_lineareval.py config/m2d.yaml gtzan batch_size=16,weight_file=$1
-CUDA_VISIBLE_DEVICES=0 python 2pass_lineareval.py config/m2d.yaml spcv2 batch_size=64,weight_file=$1
-CUDA_VISIBLE_DEVICES=0 python 2pass_lineareval.py config/m2d.yaml esc50 batch_size=64,weight_file=$1
-CUDA_VISIBLE_DEVICES=0 python 2pass_lineareval.py config/m2d.yaml us8k batch_size=64,weight_file=$1
-CUDA_VISIBLE_DEVICES=0 python 2pass_lineareval.py config/m2d.yaml vc1 batch_size=64,weight_file=$1
-CUDA_VISIBLE_DEVICES=0 python 2pass_lineareval.py config/m2d.yaml voxforge batch_size=64,weight_file=$1
-CUDA_VISIBLE_DEVICES=0 python 2pass_lineareval.py config/m2d.yaml nsynth batch_size=64,weight_file=$1
-CUDA_VISIBLE_DEVICES=0 python 2pass_lineareval.py config/m2d.yaml surge batch_size=64,weight_file=$1
+GPU=0
+
+if [[ "$1" == *'p32k-'* ]]; then
+    cfg='config/m2d_32k.yaml'
+else
+    cfg='config/m2d.yaml'
+fi
+
+CUDA_VISIBLE_DEVICES=$GPU python 2pass_lineareval.py $cfg cremad batch_size=16,weight_file=$1
+CUDA_VISIBLE_DEVICES=$GPU python 2pass_lineareval.py $cfg gtzan batch_size=16,weight_file=$1
+CUDA_VISIBLE_DEVICES=$GPU python 2pass_lineareval.py $cfg spcv2 batch_size=64,weight_file=$1
+CUDA_VISIBLE_DEVICES=$GPU python 2pass_lineareval.py $cfg esc50 batch_size=64,weight_file=$1
+CUDA_VISIBLE_DEVICES=$GPU python 2pass_lineareval.py $cfg us8k batch_size=64,weight_file=$1
+CUDA_VISIBLE_DEVICES=$GPU python 2pass_lineareval.py $cfg vc1 batch_size=64,weight_file=$1
+CUDA_VISIBLE_DEVICES=$GPU python 2pass_lineareval.py $cfg voxforge batch_size=64,weight_file=$1
+CUDA_VISIBLE_DEVICES=$GPU python 2pass_lineareval.py $cfg nsynth batch_size=64,weight_file=$1
+CUDA_VISIBLE_DEVICES=$GPU python 2pass_lineareval.py $cfg surge batch_size=64,weight_file=$1
+
 python summarize.py $1
