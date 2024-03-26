@@ -4,9 +4,6 @@ All you need is:
     pip install timm, einops, nnAudio
 """
 
-import sys
-sys.path.append('..')  # workaround for using heareval with `pip install -e .`
-
 import logging
 import numpy as np
 from pathlib import Path
@@ -25,7 +22,6 @@ class Config:
     feature_d = 768 * 5
     norm_type = all
     pooling_type = 'mean'
-
     model = ''
     input_size = [80, 208]
     patch_size = [16, 16]
@@ -108,6 +104,7 @@ class LocalViT(timm.models.vision_transformer.VisionTransformer):
 
 
 def parse_sizes_by_name(name):
+    # Parse parameters. "m2d_vit_base-80x1001p16x16p16k" -> input size: 80x1001, patch size: 16x16, sr: 16k
     model_cls = name.split('-')[0]
     params = name.split('-')[1]
     params = params.split('p')[:3]
@@ -158,21 +155,21 @@ def reformat_ckpt_keys(checkpoint):
 def get_backbone(args, weight_file):
     args.input_size, args.patch_size, args.sr, args.model = parse_sizes_by_name(Path(weight_file).parent.name)
 
+    # Load checkpoint.
     checkpoint = torch.load(weight_file, map_location='cpu')
     checkpoint = reformat_ckpt_keys(checkpoint)
 
+    # Create a ViT.
     model = LocalViT(
         in_chans=1, img_size=args.input_size, patch_size=args.patch_size, embed_dim=768, depth=12, num_heads=12,
         mlp_ratio=4, norm_layer=partial(torch.nn.LayerNorm, eps=1e-6))
 
-    # load weights
-    # remove non-model parameters (i.e. for using encoder only model)
+    # Load weights.
     dropped = drop_non_model_weights(model, checkpoint, weight_file)
     msg = model.load_state_dict(dropped)
-    print(msg)
-    logging.info(msg)
+    print(msg); logging.info(msg)
 
-    # set normalization statistics
+    # Set normalization statistics for backward compatibility. The [-7.1, 4.2] is for 2022 models.
     args.mean, args.std = checkpoint['norm_stats'] if 'norm_stats' in checkpoint else [-7.1, 4.2]
 
     model.eval()
@@ -224,15 +221,15 @@ class PortableM2D(torch.nn.Module):
         self.cfg.weight_file = weight_file
         self.cfg.freeze_embed = freeze_embed
 
-        # Create backbone model
+        # Create backbone model.
         self.backbone, checkpoint = get_backbone(self.cfg, self.cfg.weight_file)
-        # Finalize feature dimension
+        # Finalize feature dimension.
         d = self.backbone.pos_embed.shape[-1]
         if num_classes is not None and 'module.head.mlp.mlp.0.weight' in checkpoint and checkpoint['module.head.mlp.mlp.0.weight'].shape[-1] == d:
             self.cfg.flat_features = True
         n_stack_feature = 1 if self.cfg.flat_features else (self.cfg.input_size[0] // self.cfg.patch_size[0])
         self.cfg.feature_d = d * n_stack_feature  # 768 if flat_features else 768*5=3840
-        # Create head
+        # Create head.
         if num_classes is not None:
             self.head_norm = torch.nn.BatchNorm1d(self.cfg.feature_d, affine=False)
             self.head = torch.nn.Linear(self.cfg.feature_d, num_classes)
@@ -252,7 +249,7 @@ class PortableM2D(torch.nn.Module):
         self.to_spec = get_to_melspec(self.cfg)
         self.eval()
 
-    def to_feature(self, batch_audio):
+    def to_log_mel_spec(self, batch_audio):
         x = self.to_spec(batch_audio)
         x = (x + torch.finfo().eps).log()
         x = x.unsqueeze(1)
@@ -263,16 +260,16 @@ class PortableM2D(torch.nn.Module):
         return x
 
     def to_normalized_feature(self, batch_audio):
-        x = self.to_feature(batch_audio)
+        x = self.to_log_mel_spec(batch_audio)
         x = self.normalize_batch(x)
         return x
 
-    def encode_lms(self, x):
+    def encode_lms(self, x, average_per_time_frame=False):
         patch_fbins = self.backbone.grid_size()[0]
         unit_frames = self.cfg.input_size[1]
         patch_frames = self.backbone.patch_size()[1]
         embed_d = self.backbone.patch_embed.proj.out_channels
-        chunks = (x.shape[-1] + unit_frames - 1) // unit_frames
+        n_chunk = (x.shape[-1] + unit_frames - 1) // unit_frames
         pad_frames = (patch_frames - x.shape[-1] % patch_frames) % patch_frames
         if pad_frames > 0:
             x = torch.nn.functional.pad(x, (0, pad_frames))
@@ -280,39 +277,48 @@ class PortableM2D(torch.nn.Module):
         embeddings = []
         if self.cfg.flat_features:
             # flatten all patch embeddings
-            for i in range(chunks):
+            for i in range(n_chunk):
                 emb = self.backbone.forward_encoder(x[..., i*unit_frames:(i+1)*unit_frames])
                 emb = emb[..., 1:, :]
+                if average_per_time_frame:
+                    emb = rearrange(emb, 'b (f t) d -> b t d f', f=patch_fbins, d=embed_d).mean(-1)
                 embeddings.append(emb)
         else:
             # stack embeddings along time frame
-            for i in range(chunks):
+            for i in range(n_chunk):
                 emb = self.backbone.forward_encoder(x[..., i*unit_frames:(i+1)*unit_frames])
                 emb = emb[..., 1:, :]
                 emb = rearrange(emb, 'b (f t) d -> b t (f d)', f=patch_fbins, d=embed_d)
                 embeddings.append(emb)
-        # concatenate chunks in the time axis
+        # concatenate embedding chunks in the time axis
         x = torch.cat(embeddings, axis=-2)
         return x
 
-    def encode(self, batch_audio):
+    def encode(self, batch_audio, average_per_time_frame=False):
         x = self.to_normalized_feature(batch_audio)
-        return self.encode_lms(x)
+        return self.encode_lms(x, average_per_time_frame=average_per_time_frame)
 
-    def forward(self, batch_audio):
-        x = self.encode(batch_audio)
+    def forward(self, batch_audio, average_per_time_frame=False):
+        x = self.encode(batch_audio, average_per_time_frame=average_per_time_frame)
         if hasattr(self, 'head'):
             x = x.mean(1)  # B, D
             x = self.head_norm(x.unsqueeze(-1)).squeeze(-1)
             x = self.head(x)
         return x
 
-    def get_scene_embeddings(self, audio):
-        x = self.encode(audio)
+    def get_scene_embeddings(self, batch_audio):
+        x = self.encode(batch_audio)
         x = torch.mean(x, dim=1)
         return x
 
-    def get_timestamp_embeddings(self, audio):
-        x = self.encode(audio)
-        ts = get_timestamps(self.cfg, audio, x)
+    def get_timestamp_embeddings(self, batch_audio):
+        x = self.encode(batch_audio, average_per_time_frame=True)
+        ts = get_timestamps(self.cfg, batch_audio, x)
+        return x, ts
+
+    def forward_frames(self, batch_audio):
+        x, ts = self.get_timestamp_embeddings(batch_audio)
+        if hasattr(self, 'head'):
+            x = self.head_norm(x.transpose(-1, -2)).transpose(-2, -1)
+            x = self.head(x)
         return x, ts

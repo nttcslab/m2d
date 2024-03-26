@@ -6,11 +6,19 @@ This repository provides demo implementations of the following papers:
 
 - "[Masked Modeling Duo: Learning Representations by Encouraging Both Networks to Model the Input](https://arxiv.org/abs/2210.14648)"
 - "[Masked Modeling Duo for Speech: Specializing General-Purpose Audio Representation to Speech using Denoising Distillation](https://arxiv.org/abs/2305.14079)"
+- "Masked Modeling Duo for X" (A new paper, waiting for notification)
+- "Masked Modeling Duo for Y" (Another new paper, also waiting for notification)
 
 You can find the following.
 
 - Code for pre-training, linear evaluation, and fine-tuning.
 - Pre-trained weights.
+- Examples.
+
+### ✨New: Colab example is available (Audio Tagging)
+
+👉 Open [Colab_M2D_example_Tagging.ipynb](examples/Colab_M2D_example_Tagging.ipynb).
+
 
 If you find our M2D useful in your research, please consider citing our paper:
 
