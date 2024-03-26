@@ -17,7 +17,7 @@ You can find the following.
 
 ### ✨New: Colab example is available (Audio Tagging)
 
-👉 Open [Colab_M2D_example_Tagging.ipynb](examples/Colab_M2D_example_Tagging.ipynb).
+👉 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg) examples/olab_M2D_example_Tagging.ipynb](http://colab.research.google.com/github/nttcslab/m2d/blob/master/examples/Colab_M2D_example_Tagging.ipynb)
 
 
 If you find our M2D useful in your research, please consider citing our paper:
