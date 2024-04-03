@@ -215,11 +215,12 @@ def get_timestamps(cfg, batch_audio, x):  # Returns timestamps in milliseconds.
 
 
 class PortableM2D(torch.nn.Module):
-    def __init__(self, weight_file, num_classes=None, freeze_embed=False):
+    def __init__(self, weight_file, num_classes=None, freeze_embed=False, flat_features=None):
         super().__init__()
         self.cfg = Config()
         self.cfg.weight_file = weight_file
         self.cfg.freeze_embed = freeze_embed
+        self.cfg.flat_features = self.cfg.flat_features if flat_features is None else flat_features
 
         # Create backbone model.
         self.backbone, checkpoint = get_backbone(self.cfg, self.cfg.weight_file)

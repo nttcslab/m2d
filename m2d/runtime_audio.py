@@ -36,6 +36,7 @@ class Config:
 
 
 def parse_sizes_by_name(name):
+    # Parse parameters. "m2d_vit_base-80x1001p16x16p16k" -> input size: 80x1001, patch size: 16x16, sr: 16k
     model_cls = name.split('-')[0]
     params = name.split('-')[1]
     params = params.split('p')[:3]
@@ -197,7 +198,7 @@ def get_timestamps(cfg, batch_audio, x):  # Returns timestamps in milliseconds.
 
 
 class RuntimeM2D(nn.Module):
-    def __init__(self, cfg=Config(), weight_file=None, training_mask=0.0, encoder_only=None, dur_frames=None, num_classes=None, head_norm='batchnorm', freeze_embed=None):
+    def __init__(self, cfg=Config(), weight_file=None, training_mask=0.0, encoder_only=None, dur_frames=None, num_classes=None, freeze_embed=None, flat_features=None):
         super().__init__()
         cfg.weight_file = weight_file or cfg.weight_file
         cfg.training_mask = training_mask if training_mask > 0.0 else cfg.training_mask
@@ -205,20 +206,20 @@ class RuntimeM2D(nn.Module):
         cfg.encoder_only = cfg.encoder_only if encoder_only is None else encoder_only
         cfg.dur_frames = cfg.dur_frames if dur_frames is None else dur_frames
         cfg.freeze_embed = cfg.freeze_embed if freeze_embed is None else freeze_embed
+        cfg.flat_features = cfg.flat_features if flat_features is None else flat_features
 
-        # Create backbone model
+        # Create backbone model.
         self.backbone, checkpoint = get_backbone(cfg, cfg.weight_file, cfg.encoder_only, cfg.dur_frames)
-        # Finalize feature dimension (768 if flat_features else 768*5=3840)
+        # Finalize feature dimension. (768 if flat_features else 768*5=3840)
         d = self.backbone.pos_embed.shape[-1]
         if self.is_training_mask() or \
          (num_classes is not None and 'module.head.mlp.mlp.0.weight' in checkpoint and checkpoint['module.head.mlp.mlp.0.weight'].shape[-1] == d):
             cfg.flat_features = True
         n_stack_feature = 1 if cfg.flat_features else (cfg.input_size[0] // cfg.patch_size[0])
         cfg.feature_d = d * n_stack_feature
-        # Create head
+        # Create head.
         if num_classes is not None:
-            assert head_norm in ['layernorm', 'batchnorm']
-            self.head_norm = torch.nn.LayerNorm(cfg.feature_d) if head_norm == 'layernorm' else torch.nn.BatchNorm1d(cfg.feature_d, affine=False)
+            self.head_norm = torch.nn.BatchNorm1d(cfg.feature_d, affine=False)
             self.head = torch.nn.Linear(cfg.feature_d, num_classes)
             trunc_normal_(self.head.weight, std=2e-5)
             load_evar_head_parameters(checkpoint, self.head_norm, self.head)
@@ -239,6 +240,7 @@ class RuntimeM2D(nn.Module):
 
         self.to_spec = get_to_melspec(cfg)
         self.sample_rate = cfg.sample_rate
+        self.eval()
 
     def forward(self, lms):
         assert hasattr(self, 'head'), 'Set the option num_classes with your desired number of classes, such as 527 for AudioSet.'
@@ -252,7 +254,6 @@ class RuntimeM2D(nn.Module):
         return self.cfg.training_mask > 0.0
 
     def to_feature(self, batch_audio):
-        # raw -> spectrogram, and normalize
         x = self.to_spec(batch_audio)
         x = (x + torch.finfo().eps).log()
         x = x.unsqueeze(1)
@@ -263,13 +264,11 @@ class RuntimeM2D(nn.Module):
         return x
 
     def to_normalized_spec(self, batch_audio):
-        # raw -> spectrogram
         x = self.to_feature(batch_audio)
-        # normalize among batch samples
         x = self.normalize_batch(x)
         return x
 
-    def encode_lms(self, x, return_layers=False):
+    def encode_lms(self, x, return_layers=False, average_per_time_frame=False):
         if self.cfg.dur_frames is not None:
             return self.encode_lms_w_duration(x, return_layers=return_layers)
 
@@ -289,6 +288,8 @@ class RuntimeM2D(nn.Module):
             for i in range(chunks):
                 emb, *_ = self.backbone.forward_encoder(x[..., i*unit_frames:(i+1)*unit_frames], mask_ratio=mask_ratio, return_layers=return_layers, adjust_short=True)
                 cls_token, emb = emb[..., :1, :], emb[..., 1:, :]
+                if average_per_time_frame:
+                    emb = rearrange(emb, 'b (f t) d -> b t d f', f=patch_fbins, d=embed_d).mean(-1)
                 embeddings.append(emb)
         else:
             # stack embeddings along time frame
@@ -320,30 +321,33 @@ class RuntimeM2D(nn.Module):
 
         return x if len(x.shape) == 3 else [x_ for x_ in x]
 
-    def encode(self, batch_audio):
+    def encode(self, batch_audio, average_per_time_frame=False):
         x = self.to_normalized_spec(batch_audio)
-        return self.encode_lms(x)
+        return self.encode_lms(x, average_per_time_frame=average_per_time_frame)
 
-    def get_scene_embeddings(self, audio):
-        """
-        audio: n_sounds x n_samples of mono audio in the range [-1, 1]. All sounds in a batch will be padded/trimmed to the same length.
-        Returns:
-            embedding: A float32 Tensor with shape (n_sounds, model.scene_embedding_size).
-        """
-        x = self.encode(audio)
+    def forward(self, batch_audio, average_per_time_frame=False):
+        x = self.encode(batch_audio, average_per_time_frame=average_per_time_frame)
+        if hasattr(self, 'head'):
+            x = x.mean(1)  # B, D
+            x = self.head_norm(x.unsqueeze(-1)).squeeze(-1)
+            x = self.head(x)
+        return x
+
+    def get_scene_embeddings(self, batch_audio):
+        x = self.encode(batch_audio)
         x = torch.mean(x, dim=1)
         return x
 
-    def get_timestamp_embeddings(self, audio):
-        """
-        audio: n_sounds x n_samples of mono audio in the range [-1, 1]. All sounds in a batch will be padded/trimmed to the same length.
-        Returns:
-            embedding: A float32 Tensor with shape (n_sounds, n_timestamps, model.timestamp_embedding_size).
-            timestamps: A float32 Tensor with shape (`n_sounds, n_timestamps). Centered timestamps in milliseconds corresponding to each embedding in the output.
-        """
-        x = self.encode(audio)
-        ts = get_timestamps(self.cfg, audio, x)
-        # print(audio.shape, x.shape, ts.shape)
+    def get_timestamp_embeddings(self, batch_audio):
+        x = self.encode(batch_audio, average_per_time_frame=True)
+        ts = get_timestamps(self.cfg, batch_audio, x)
+        return x, ts
+
+    def forward_frames(self, batch_audio):
+        x, ts = self.get_timestamp_embeddings(batch_audio)
+        if hasattr(self, 'head'):
+            x = self.head_norm(x.transpose(-1, -2)).transpose(-2, -1)
+            x = self.head(x)
         return x, ts
 
     def reconstruct(self, lms, mask_ratio, start_frame=0):
