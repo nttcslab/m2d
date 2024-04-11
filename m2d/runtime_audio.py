@@ -119,7 +119,7 @@ def get_backbone(args, weight_file, encoder_only, dur_frames):
     args.decoder_depth = max(dec_blocks_nums) + 1
 
     model_args = dict(img_size=args.input_size, patch_size=args.patch_size, decoder_depth=args.decoder_depth, norm_stats=norm_stats)
-    if args.model.startswith('m2d_x_vit'):
+    if args.model.startswith('m2d_x_vit') or args.model.startswith('m2d_as_vit'):
         off_emb_dim = 3840 if checkpoint is None else checkpoint['offline_predictor.weight'].shape[0]
         model_args['off_emb_dim'] = off_emb_dim
 

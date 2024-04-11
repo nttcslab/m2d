@@ -65,6 +65,7 @@ class LocalViT(timm.models.vision_transformer.VisionTransformer):
         # Workaround for PatchEmbed to avoid unintended assertion failure. ex) AssertionError: Input image width (102) doesn't match model (608).
         self.patch_embed = PatchEmbed(self.patch_embed.img_size, self.patch_embed.patch_size,
                                       self.patch_embed.proj.in_channels, self.patch_embed.proj.out_channels)
+        self.norm_stats = torch.nn.Parameter(torch.tensor([-7.1, 4.2]), requires_grad=False)
         # We do not use the default head
         del self.head
 
@@ -158,6 +159,10 @@ def get_backbone(args, weight_file):
     # Load checkpoint.
     checkpoint = torch.load(weight_file, map_location='cpu')
     checkpoint = reformat_ckpt_keys(checkpoint)
+    # Set normalization statistics for backward compatibility. The [-7.1, 4.2] is for 2022 models.
+    if 'norm_stats' not in checkpoint:
+        checkpoint['norm_stats'] = torch.tensor([-7.1, 4.2])
+        print(' using default norm_stats:', checkpoint['norm_stats'])
 
     # Create a ViT.
     model = LocalViT(
@@ -169,8 +174,8 @@ def get_backbone(args, weight_file):
     msg = model.load_state_dict(dropped)
     print(msg); logging.info(msg)
 
-    # Set normalization statistics for backward compatibility. The [-7.1, 4.2] is for 2022 models.
-    args.mean, args.std = checkpoint['norm_stats'] if 'norm_stats' in checkpoint else [-7.1, 4.2]
+    # Make normalization statistics for the model easy to use in the downstream task.
+    args.mean, args.std = model.state_dict()['norm_stats'].to('cpu').numpy()
 
     model.eval()
     return model, checkpoint

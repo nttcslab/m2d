@@ -60,18 +60,18 @@ For preparing AudioSet data files (`data/audioset_lms` and `data/files_audioset.
 The `train_speech.py` pre-trains for speech.
 
 The following example would run on any affordable GPU, consuming only 7,170MiB. However, please note that it will take very long (It took over 20 minutes for one epoch).
-You can also change the BG noise dataset by adding `--csv_bg_noise data/files_fsd50k.csv`, for example.
+You can also change the BG noise dataset by adding `--csv_bg_noise data/files_f_s_d_5_0_k.csv`, for example.
 
 ```sh
-python train_speech.py --loss_m2d 1. --loss_off 1. --input_size 80x208 --patch_size 80x4 --noise_ratio 0.2 --batch_size 128 --accum_iter 16
+python -m speech.train_speech --loss_m2d 1. --loss_off 1. --input_size 80x208 --patch_size 80x4 --noise_ratio 0.2 --batch_size 128 --accum_iter 16
 ```
 
 The followings are for pre-training high-end models, taking 2.5-3.5 days to complete with 4 A100s.
 
 ```sh
-OMP_NUM_THREADS=1 python -m torch.distributed.launch --nproc_per_node=4 train_speech.py --loss_m2d 1. --loss_off .5 --input_size 80x400 --patch_size 80x2 --noise_ratio 0.2
-OMP_NUM_THREADS=1 python -m torch.distributed.launch --nproc_per_node=4 train_speech.py --loss_m2d 1. --loss_off .5 --input_size 80x512 --patch_size 80x2 --noise_ratio 0.2 --batch_size 256 --accum_iter 2
-OMP_NUM_THREADS=1 python -m torch.distributed.launch --nproc_per_node=4 train_speech.py --loss_m2d 1. --loss_off .5 --input_size 80x608 --patch_size 80x2 --noise_ratio 0.2 --batch_size 256 --accum_iter 2
+OMP_NUM_THREADS=1 torchrun --nproc_per_node=4 -m speech.train_speech --loss_m2d 1. --loss_off .5 --input_size 80x400 --patch_size 80x2 --noise_ratio 0.2
+OMP_NUM_THREADS=1 torchrun --nproc_per_node=4 train_speech.py --loss_m2d 1. --loss_off .5 --input_size 80x512 --patch_size 80x2 --noise_ratio 0.2 --batch_size 256 --accum_iter 2
+OMP_NUM_THREADS=1 torchrun --nproc_per_node=4 train_speech.py --loss_m2d 1. --loss_off .5 --input_size 80x608 --patch_size 80x2 --noise_ratio 0.2 --batch_size 256 --accum_iter 2
 ```
 
 #### 3-2-1. Major pre-training options
