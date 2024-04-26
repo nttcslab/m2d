@@ -1,0 +1,48 @@
+diff --git a/evar/ds_tasks.py b/evar/ds_tasks.py
+index 14576f2..b717425 100644
+--- a/evar/ds_tasks.py
++++ b/evar/ds_tasks.py
+@@ -19,6 +19,9 @@ _defs = {
+     'voxforge': [1, 5.8, None, False],
+     'as20k': [1, 10.0, 'as', False],
+     'as': [1, 10.0, 'as', True],
++    'circor1': [1, 5.0, None, False],
++    'circor2': [1, 5.0, None, False],
++    'circor3': [1, 5.0, None, False],
+ }
+ 
+ _fs_table = {
+diff --git a/finetune.py b/finetune.py
+index e196538..a32cf0d 100644
+--- a/finetune.py
++++ b/finetune.py
+@@ -126,6 +126,18 @@ def loss_bce(logits, gts):
+     return F.binary_cross_entropy_with_logits(logits, gts) # no need to apply F.sigmoid(logits)
+ 
+ 
++class WeightedCE:
++    def __init__(self, labels, device) -> None:
++        weights = utils.class_weight.compute_class_weight('balanced', classes=np.unique(labels), y=labels)
++        self.celoss = torch.nn.CrossEntropyLoss(weight=torch.tensor(weights).to(device))
++        self.__name__ = f'CrossEntropyLoss(weight={weights})'
++
++    def __call__(self, logits, gts):
++        preds = F.softmax(logits, dim=-1)
++        loss = self.celoss(preds, gts)
++        return loss
++
++
+ def eval_map(y_score, y_true, classes):
+     average_precision = metrics.average_precision_score(
+         y_true, y_score, average=None)
+@@ -211,8 +223,8 @@ def arg_conf_str(args, defaults={
+ 
+ def _train(cfg, ar_model, device, logpath, train_loader, valid_loader, test_loader, multi_label, seed, lr, balanced, verbose):
+     classes = train_loader.dataset.classes
+-
+-    loss_fn = loss_bce if multi_label else loss_nll
++    labels = np.argmax(train_loader.dataset.labels, axis=1)  # For app/circor, OH to numbers
++    loss_fn = WeightedCE(labels.numpy(), device)  # For app/circor, using class-weighted CE loss
+     eval_fn = eval_map if multi_label else eval_acc
+     crit_str = 'mAP' if eval_fn == eval_map else 'acc'
+     optimizer = {

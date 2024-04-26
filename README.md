@@ -27,7 +27,7 @@ You can use simple code to load an M2D model and encode your audio.
 ```python
 # Create a model and load pre-trained weights.
 from examples.portable_m2d import PortableM2D  # The portable_m2d is a simple one-file loader.
-model = PortableM2D('m2d_vit_base-80x608p16x16-220930-mr7/checkpoint-300.pth')
+model = PortableM2D('m2d_as_vit_base-80x1001p16x16-240213_AS-FT_enconly/weights_ep69it3124-0.48494.pth')
 
 # Prepare test audios. (a dummy example of three 10-s waveforms)
 import torch

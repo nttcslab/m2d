@@ -1,0 +1,49 @@
+--- org/heart-murmur-detection/ModelEvaluation/evaluate_model.py	2024-01-12 15:29:10.126397375 +0900
++++ /heart-murmur-detection/ModelEvaluation/evaluate_model.py	2023-11-15 16:47:47.351524689 +0900
+@@ -59,6 +59,10 @@
+     murmur_weighted_accuracy = compute_weighted_accuracy(
+         murmur_labels, output_labels, murmur_classes
+     )  # This is the murmur scoring metric.
++
++    # UAR
++    murmur_uar = murmur_accuracy_classes.mean()
++
+     murmur_scores = (
+         murmur_classes,
+         murmur_auroc,
+@@ -70,6 +74,7 @@
+         murmur_accuracy,
+         murmur_accuracy_classes,
+         murmur_weighted_accuracy,
++        murmur_uar,
+     )
+ 
+     (
+@@ -83,11 +88,12 @@
+         accuracy,
+         accuracy_classes,
+         weighted_accuracy,
++        uar,
+     ) = murmur_scores
+     murmur_output_string = (
+-        "AUROC,AUPRC,F-measure,Accuracy,Weighted Accuracy"
+-        "\n{:.3f},{:.3f},{:.3f},{:.3f},{:.3f}\n".format(
+-            auroc, auprc, f_measure, accuracy, weighted_accuracy
++        "AUROC,AUPRC,F-measure,Accuracy,Weighted Accuracy,UAR"
++        "\n{:.3f},{:.3f},{:.3f},{:.3f},{:.3f},{:.3f}\n".format(
++            auroc, auprc, f_measure, accuracy, weighted_accuracy, uar
+         )
+     )
+     murmur_class_output_string = (
+@@ -109,8 +115,10 @@
+         + murmur_class_output_string
+     )
+ 
++    print(output_string)
++
+     # Return the results.
+-    return output_string
++    return murmur_scores
+ 
+ 
+ # Find Challenge files.
