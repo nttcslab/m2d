@@ -2,7 +2,7 @@
 
 # Masked Modeling Duo (M2D)
 
-This repository provides demo implementations of our paper "[Masked Modeling Duo: Towards a Universal Audio Pre-training Framework](https://arxiv.org/abs/2404.06095)" (to appear on TASLP), "[Masked Modeling Duo: Learning Representations by Encouraging Both Networks to Model the Input](https://arxiv.org/abs/2210.14648)", and so on.
+This repository provides demo implementations of our paper "[Masked Modeling Duo: Towards a Universal Audio Pre-training Framework](https://ieeexplore.ieee.org/document/10502167)", "[Masked Modeling Duo: Learning Representations by Encouraging Both Networks to Model the Input](https://arxiv.org/abs/2210.14648)", and so on.
 
 ## Pre-trained/Fine-tuned Weights
 
@@ -45,9 +45,9 @@ print(clip_level.shape)  # torch.Size([3, 3840])
 ## Application Resources
 
 - [👉 **Resources for M2D-X Medical (ICBHI2017/SPRSound) applications**](app/icbhi_sprs/README_ICBHI_SPRS.md).
+- [👉 **Resources for M2D Medical (CirCor DigiScope heart sound) application**](app/circor/README.md).
 - [👉 **Resources for M2D-S (M2D-X specialized in Speech)**](speech/README.md).
 - (TBD) Resources for M2D-AS (M2D-X specialized in AudioSet).
-- (TBD) Resources for M2D-X Medical (Heart sound) application.
 
 ## 1. Setup
 
@@ -212,13 +212,12 @@ If you find our M2D useful in your research, please consider citing our papers.
 @article{niizumi2024m2dx,
     title   = {{Masked Modeling Duo: Towards a Universal Audio Pre-training Framework}},
     author  = {Daisuke Niizumi and Daiki Takeuchi and Yasunori Ohishi and Noboru Harada and Kunio Kashino},
-    journal = {To appear on IEEE/ACM Trans. Audio, Speech, Language Process.},
+    journal = {IEEE/ACM Trans. Audio, Speech, Language Process.},
     year    = {2024},
     volume  = {TBD},
     pages   = {TBD},
-    url     = {https://arxiv.org/abs/2404.06095},
-    doi     = {TBD}
-}
+    url     = {https://ieeexplore.ieee.org/document/10502167},
+    doi     = {10.1109/TASLP.2024.3389636}}
 
 @inproceedings{niizumi2023m2d,
     title   = {{Masked Modeling Duo: Learning Representations by Encouraging Both Networks to Model the Input}},
@@ -227,7 +226,6 @@ If you find our M2D useful in your research, please consider citing our papers.
     year    = {2023},
     url     = {https://ieeexplore.ieee.org/document/10097236},
     doi     = {10.1109/ICASSP49357.2023.10097236}}
-}
 
 @inproceedings{niizumi2023m2d4speech,
     title   = {{Masked Modeling Duo for Speech: Specializing General-Purpose Audio Representation to Speech using Denoising Distillation}},
@@ -236,6 +234,14 @@ If you find our M2D useful in your research, please consider citing our papers.
     booktitle={Proc. INTERSPEECH 2023},
     pages   = {1294--1298},
     doi     = {10.21437/Interspeech.2023-221}
+}
+
+@article{niizumi2024,
+    title   = {{Exploring Pre-trained General-purpose Audio Representations for Heart Murmur Detection}},
+    author  = {Daisuke Niizumi and Daiki Takeuchi and Yasunori Ohishi and Noboru Harada and Kunio Kashino},
+    journal = {to appear at IEEE EMBC},
+    year    = {2024},
+    url     = {TBD}
 }
 ```
 
