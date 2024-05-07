@@ -14,6 +14,11 @@ This repository provides demo implementations of our paper "[Masked Modeling Duo
 | [m2d_vit_base-80x608p16x16-221006-mr7](https://github.com/nttcslab/m2d/releases/download/v0.1.0/m2d_vit_base-80x608p16x16-221006-mr7.zip) | General-purpose transfer learning and further pre-training. | M2D/0.7 | ✅ | - |
 | [m2d_vit_base-80x608p16x16-221006-mr6](https://github.com/nttcslab/m2d/releases/download/v0.1.0/m2d_vit_base-80x608p16x16-221006-mr6.zip) | General-purpose transfer learning and further pre-training. | M2D/0.6 | ✅ | - |
 
+| Weight        | Recommendation  | Description | Fur-PT Ready | AS2M mAP |
+|:--------------|:----------------|:------------|:------:|:--------:|
+| [m2d_as_vit_base-80x1001p16x16p32k-240413_AS-FT_enconly](https://github.com/nttcslab/m2d/releases/download/v0.3.0/m2d_as_vit_base-80x1001p16x16p32k-240413_AS-FT_enconly.zip) | Best for audio tagging (AT) / sound event detection (SED) at 32 kHz.| M2D-AS fine-tuned on AS2M@32kHz | N/A | 0.480 |
+| [m2d_as_vit_base-80x608p16x16p32k-240413_enconly](https://github.com/nttcslab/m2d/releases/download/v0.1.0/m2d_as_vit_base-80x608p16x16p32k-240413_enconly.zip) | General-purpose transfer learning and further pre-training at 32 kHz. | M2D/0.7@32kHz | ✅ | - |
+
 
 ## Quick Start
 
@@ -214,8 +219,8 @@ If you find our M2D useful in your research, please consider citing our papers.
     author  = {Daisuke Niizumi and Daiki Takeuchi and Yasunori Ohishi and Noboru Harada and Kunio Kashino},
     journal = {IEEE/ACM Trans. Audio, Speech, Language Process.},
     year    = {2024},
-    volume  = {TBD},
-    pages   = {TBD},
+    volume  = {32},
+    pages   = {2391-2406},
     url     = {https://ieeexplore.ieee.org/document/10502167},
     doi     = {10.1109/TASLP.2024.3389636}}
 
@@ -233,16 +238,14 @@ If you find our M2D useful in your research, please consider citing our papers.
     year    = {2023},
     booktitle={Proc. INTERSPEECH 2023},
     pages   = {1294--1298},
-    doi     = {10.21437/Interspeech.2023-221}
-}
+    doi     = {10.21437/Interspeech.2023-221}}
 
-@article{niizumi2024,
+@article{niizumi2024embc,
     title   = {{Exploring Pre-trained General-purpose Audio Representations for Heart Murmur Detection}},
     author  = {Daisuke Niizumi and Daiki Takeuchi and Yasunori Ohishi and Noboru Harada and Kunio Kashino},
     journal = {to appear at IEEE EMBC},
     year    = {2024},
-    url     = {TBD}
-}
+    url     = {https://arxiv.org/abs/2404.17107}}
 ```
 
 ## Acknowledgements

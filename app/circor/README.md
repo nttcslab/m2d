@@ -2,7 +2,13 @@
 
 ![EMBC](https://embc.embs.org/2024/wp-content/uploads/sites/102/2023/05/ieee-embc-2024-logo2x.png)
 
-This sub-repository provides codes for evaluating the performance of pre-trained models intended to reproduce the results in our [IEEE EMBC 2024](https://embc.embs.org/2024/) paper.
+This sub-repository provides codes for evaluating the performance of pre-trained models intended to reproduce the results in [our IEEE EMBC 2024 paper](https://arxiv.org/abs/2404.17107).
+
+<figure>
+  <img src="EMBC_TableII.png" alt="Table II", width="40%">
+  <figcaption>We compared the results among the previous studies and four pre-trained audio models.</figcaption>
+</figure>
+
 Our contents include:
 
 - Data downloading and formatting notebook. It also covers code setup.
@@ -13,12 +19,12 @@ Our contents include:
 Please refer to the following paper (arXiv link) for the details.
 
 ```bibtex
-@article{niizumi2024,
+@article{niizumi2024embc,
     title   = {{Exploring Pre-trained General-purpose Audio Representations for Heart Murmur Detection}},
     author  = {Daisuke Niizumi and Daiki Takeuchi and Yasunori Ohishi and Noboru Harada and Kunio Kashino},
     journal = {to appear at IEEE EMBC},
     year    = {2024},
-    url     = {TBD}
+    url     = {https://arxiv.org/abs/2404.17107}
 }
 ```
 
@@ -30,7 +36,7 @@ Please refer to the following paper (arXiv link) for the details.
 - Format the code for our experiments
 - Integrity check for the data
 
-### 1-1. Folders after the setup
+### 1-1. Major folders
 
 You will find the following folders after the setup.
 
@@ -43,7 +49,7 @@ You will find the following folders after the setup.
     physionet.org  -- The copy of the dataset
     scores   -- The results of our paper
 
-## 2. Run Experiments
+## 2. Running Experiments
 
 We provide two example notebooks for running experiments.
 

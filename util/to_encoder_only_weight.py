@@ -13,6 +13,9 @@ from portable_m2d import PortableM2D
 src_file = sys.argv[1]
 dest_file = sys.argv[2]
 
+if not Path(src_file).stem.startswith('checkpoint'):
+    print(f' **WARNING** Do not use this converter for the fine-tuned weights. HEAD WEIGHTS WILL BE LOST.')
+
 # Load the weight. All the parameters not used in the encoder-only model will be deleted.
 # The parameter `norm_stats` will be added if the weight does not have it. i.e., Old weights.
 model = PortableM2D(src_file)
