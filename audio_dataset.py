@@ -130,6 +130,10 @@ def get_files(dataset_name):
     return files
 
 
+def get_files_no_sort(dataset_name):
+    return pd.read_csv(str(dataset_name)).file_name.values
+
+
 def build_dataset(cfg):
     """The followings configure the training dataset details.
         - data_path: Root folder of the training dataset.

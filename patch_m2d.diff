@@ -1,5 +1,5 @@
 --- _org/train_audio.py	2023-07-07 10:22:30.225586716 +0900
-+++ train_audio.py	2024-04-11 08:06:21.791080022 +0900
++++ train_audio.py	2024-04-23 00:07:30.294216967 +0900
 @@ -1,3 +1,9 @@
 +"""Masked Modeling Duo (M2D) Pre-training Script V2
 +
@@ -10,7 +10,7 @@
  # Copyright (c) Meta Platforms, Inc. and affiliates.
  # All rights reserved.
  
-@@ -15,69 +21,102 @@
+@@ -15,69 +21,105 @@
  import os
  import time
  from pathlib import Path
@@ -91,6 +91,9 @@
                          help='Use (per-patch) normalized pixels as targets for computing loss')
 -    parser.set_defaults(norm_pix_loss=False)
 +    parser.set_defaults(norm_pix_loss=True)
++
++    parser.add_argument('--cont_mask', default=0, type=int,
++                        help='Use random 1-d (continuous) masking scheme. 0:off, 0<:# of frames to make them continuous.')
  
      # Optimizer parameters
      parser.add_argument('--weight_decay', type=float, default=0.05,
@@ -136,7 +139,7 @@
                          help='path where to tensorboard log')
      parser.add_argument('--device', default='cuda',
                          help='device to use for training / testing')
-@@ -87,7 +126,9 @@
+@@ -87,7 +129,9 @@
  
      parser.add_argument('--start_epoch', default=0, type=int, metavar='N',
                          help='start epoch')
@@ -147,7 +150,7 @@
      parser.add_argument('--pin_mem', action='store_true',
                          help='Pin CPU memory in DataLoader for more efficient (sometimes) transfer to GPU.')
      parser.add_argument('--no_pin_mem', action='store_false', dest='pin_mem')
-@@ -96,7 +137,7 @@
+@@ -96,7 +140,7 @@
      # distributed training parameters
      parser.add_argument('--world_size', default=1, type=int,
                          help='number of distributed processes')
@@ -156,7 +159,7 @@
      parser.add_argument('--dist_on_itp', action='store_true')
      parser.add_argument('--dist_url', default='env://',
                          help='url used to set up distributed training')
-@@ -104,9 +145,38 @@
+@@ -104,9 +148,38 @@
      return parser
  
  
@@ -191,13 +194,13 @@
 +            if 'scaler' in checkpoint:
 +                loss_scaler.load_state_dict(checkpoint['scaler'])
 +            print("With optim & sched!")
-+
  
++
 +def main(args):
      print('job dir: {}'.format(os.path.dirname(os.path.realpath(__file__))))
      print("{}".format(args).replace(', ', ',\n'))
  
-@@ -119,14 +189,21 @@
+@@ -119,14 +192,21 @@
  
      cudnn.benchmark = True
  
@@ -227,7 +230,7 @@
  
      if True:  # args.distributed:
          num_tasks = misc.get_world_size()
-@@ -143,6 +220,8 @@
+@@ -143,6 +223,8 @@
          log_writer = SummaryWriter(log_dir=args.log_dir)
      else:
          log_writer = None
@@ -236,7 +239,7 @@
  
      data_loader_train = torch.utils.data.DataLoader(
          dataset_train, sampler=sampler_train,
-@@ -151,53 +230,83 @@
+@@ -151,53 +233,86 @@
          pin_memory=args.pin_mem,
          drop_last=True,
      )
@@ -255,6 +258,9 @@
 +    model = models_mae.__dict__[args.model](img_size=args.input_size, patch_size=args.patch_size, decoder_depth=args.decoder_depth,
 +        norm_pix_loss=args.norm_pix_loss, loss_type=args.loss_fn, target_layers=args.target_layers, loss_m2d=args.loss_m2d, loss_off=args.loss_off,
 +        off_emb_dim=off_emb_dim, norm_stats=dataset_train.norm_stats)
++
++    if args.cont_mask > 0:
++        model.set_random_1d_mask(args.cont_mask)
  
      model.to(device)
  
@@ -334,7 +340,7 @@
  
          log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
                          'epoch': epoch,}
-@@ -207,15 +316,71 @@
+@@ -207,15 +322,72 @@
                  log_writer.flush()
              with open(os.path.join(args.output_dir, "log.txt"), mode="a", encoding="utf-8") as f:
                  f.write(json.dumps(log_stats) + "\n")
@@ -376,6 +382,7 @@
 +    'loss_off': (0.0, 'lo', 'z'),
 +    'noise_ratio': (0.0, 'nr', 'z'),
 +    'min_ds_size': (10000, 'dn', 'asis'),
++    'cont_mask': (0, 'C', 'asis'),
 +    'epochs': (0, '-e', 'asis'),
 +}
  
@@ -410,7 +417,7 @@
 +    Path(args.output_dir).mkdir(parents=True, exist_ok=True)
      main(args)
 --- _org/speech/train_speech.py	2024-03-25 20:02:30.881776628 +0900
-+++ speech/train_speech.py	2024-02-16 09:59:27.022893541 +0900
++++ speech/train_speech.py	2024-04-16 10:51:29.818134693 +0900
 @@ -1,3 +1,9 @@
 +"""M2D-S Pre-training Script
 +
@@ -421,7 +428,7 @@
  # Copyright (c) Meta Platforms, Inc. and affiliates.
  # All rights reserved.
  
-@@ -15,69 +21,102 @@
+@@ -15,69 +21,105 @@
  import os
  import time
  from pathlib import Path
@@ -500,6 +507,9 @@
                          help='Use (per-patch) normalized pixels as targets for computing loss')
 -    parser.set_defaults(norm_pix_loss=False)
 +    parser.set_defaults(norm_pix_loss=True)
++
++    parser.add_argument('--cont_mask', default=0, type=int,
++                        help='Use random 1-d (continuous) masking scheme. 0:off, 0<:# of frames to make them continuous.')
  
      # Optimizer parameters
      parser.add_argument('--weight_decay', type=float, default=0.05,
@@ -545,7 +555,7 @@
                          help='path where to tensorboard log')
      parser.add_argument('--device', default='cuda',
                          help='device to use for training / testing')
-@@ -87,7 +126,9 @@
+@@ -87,7 +129,9 @@
  
      parser.add_argument('--start_epoch', default=0, type=int, metavar='N',
                          help='start epoch')
@@ -556,7 +566,7 @@
      parser.add_argument('--pin_mem', action='store_true',
                          help='Pin CPU memory in DataLoader for more efficient (sometimes) transfer to GPU.')
      parser.add_argument('--no_pin_mem', action='store_false', dest='pin_mem')
-@@ -104,9 +145,46 @@
+@@ -104,9 +148,46 @@
      return parser
  
  
@@ -605,7 +615,7 @@
      print('job dir: {}'.format(os.path.dirname(os.path.realpath(__file__))))
      print("{}".format(args).replace(', ', ',\n'))
  
-@@ -119,13 +197,7 @@
+@@ -119,13 +200,7 @@
  
      cudnn.benchmark = True
  
@@ -620,7 +630,7 @@
      print(dataset_train)
  
      if True:  # args.distributed:
-@@ -143,6 +215,8 @@
+@@ -143,6 +218,8 @@
          log_writer = SummaryWriter(log_dir=args.log_dir)
      else:
          log_writer = None
@@ -629,7 +639,7 @@
  
      data_loader_train = torch.utils.data.DataLoader(
          dataset_train, sampler=sampler_train,
-@@ -151,53 +225,83 @@
+@@ -151,53 +228,86 @@
          pin_memory=args.pin_mem,
          drop_last=True,
      )
@@ -648,6 +658,9 @@
 -    model = models_mae.__dict__[args.model](norm_pix_loss=args.norm_pix_loss)
 +    model = models_mae.__dict__[args.model](img_size=args.input_size, patch_size=args.patch_size, decoder_depth=args.decoder_depth,
 +        norm_pix_loss=args.norm_pix_loss, loss_type=args.loss_fn, target_layers=args.target_layers, loss_m2d=args.loss_m2d, loss_off=args.loss_off)
++
++    if args.cont_mask > 0:
++        model.set_random_1d_mask(args.cont_mask)
  
      model.to(device)
  
@@ -726,7 +739,7 @@
  
          log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
                          'epoch': epoch,}
-@@ -207,15 +311,63 @@
+@@ -207,15 +317,64 @@
                  log_writer.flush()
              with open(os.path.join(args.output_dir, "log.txt"), mode="a", encoding="utf-8") as f:
                  f.write(json.dumps(log_stats) + "\n")
@@ -765,6 +778,7 @@
 +    'loss_m2d': (1.0, 'lm', 'z'),
 +    'loss_off': (0.0, 'lo', 'z'),
 +    'noise_ratio': (0.2, 'nr', 'z'),
++    'cont_mask': (0, 'C', 'asis'),
 +}
 +
  
@@ -793,7 +807,7 @@
 +    Path(args.output_dir).mkdir(parents=True, exist_ok=True)
      main(args)
 --- _org/audioset/train_as.py	2024-04-10 20:27:28.654944006 +0900
-+++ audioset/train_as.py	2024-04-11 06:45:59.825135382 +0900
++++ audioset/train_as.py	2024-05-13 07:42:18.383900880 +0900
 @@ -1,3 +1,9 @@
 +"""Masked Modeling Duo (M2D) Pre-training Script for M2D-AS
 +
@@ -804,21 +818,12 @@
  # Copyright (c) Meta Platforms, Inc. and affiliates.
  # All rights reserved.
  
-@@ -8,76 +14,192 @@
- # DeiT: https://github.com/facebookresearch/deit
- # BEiT: https://github.com/microsoft/unilm/tree/master/beit
- # --------------------------------------------------------
-+import sys
-+import os
-+import time
- import argparse
- import datetime
- import json
- import numpy as np
--import os
--import time
+@@ -15,69 +21,187 @@
+ import os
+ import time
  from pathlib import Path
 +import subprocess
++import sys
  
  import torch
  import torch.backends.cudnn as cudnn
@@ -841,7 +846,7 @@
 +from m2d import models_mae
 +
 +from m2d.engine_pretrain_m2d import train_one_epoch_m2dx
-+from audio_dataset import SpectrogramDataset, get_files, log_mixup_exp, pd
++from audio_dataset import SpectrogramDataset, get_files_no_sort, log_mixup_exp, pd
 +import common
 +from m2d.runtime_audio import RuntimeM2D
 +from sklearn.preprocessing import MultiLabelBinarizer
@@ -854,7 +859,8 @@
 +
 +        self.ds1 = SpectrogramDataset(folder=base_folder, files=files_main, crop_frames=crop_size[1],
 +                random_crop=random_crop, norm_stats=None, n_norm_calc=n_norm_calc//2)
-+        self.norm_stats = self.ds1.norm_stats
++        self.norm_stats = self.ds1.norm_stats  # for compatibility with SpectrogramDataset
++        self.norm_std = self.ds1.norm_stats[1]
 +        self.ds1.norm_stats = (self.norm_stats[0], 1.0)
 +
 +        if noise_ratio > 0.0:
@@ -862,10 +868,10 @@
 +                    random_crop=random_crop, norm_stats=None, n_norm_calc=n_norm_calc//2, repeat_short=True)
 +            self.ds2.norm_stats = (self.ds2.norm_stats[0], 1.0) # disable normalizion scaling in the ds2
 +
++        # for BG noise
 +        self.noise_ratio = noise_ratio
 +        self.bg_index = []
-+
-+        # one-hot
++        # label to one-hot
 +        oh_enc = MultiLabelBinarizer()
 +        self.labels = torch.tensor(oh_enc.fit_transform([str(ls).split(',') for ls in labels]), dtype=torch.float32)
 +        self.classes = oh_enc.classes_
@@ -885,8 +891,8 @@
 +            mixed = log_mixup_exp(noise, clean, self.noise_ratio) if self.noise_ratio < 1.0 else noise
 +        else:
 +            mixed = clean
-+        # finish normalization. clean and noise were averaged to zero. the following will scale to 1.0 using ds1 std.
-+        mixed = mixed / self.norm_stats[1]
++        # finalize normalization. clean and noise were averaged to zero. the following will scale to 1.0 using ds1 std.
++        mixed = mixed / self.norm_std
 +
 +        # load sample's label
 +        label = self.labels[index]
@@ -907,26 +913,24 @@
 +
 +
 +def build_as_clf_dataset(cfg):
-+
 +    # get files and inflate the number of files (by repeating the list) if needed
-+    files_main = get_files(cfg.csv_main)
-+    files_bg = get_files(cfg.csv_bg_noise) if cfg.noise_ratio > 0. else []
++    main_df = pd.read_csv(str(cfg.csv_main))
++    files_main = main_df.file_name.values
++    files_bg = get_files_no_sort(cfg.csv_bg_noise) if cfg.noise_ratio > 0. else []
 +
 +    ds = LabelEmbSpecDataset(
 +        base_folder=cfg.data_path, files_main=files_main,
 +        files_bg_noise=files_bg,
-+        labels=pd.read_csv(cfg.csv_main).label,
++        labels=main_df.label,
 +        crop_size=cfg.input_size,
 +        noise_ratio=cfg.noise_ratio,
 +        random_crop=True)
-+
-+    val_ds = SpectrogramDataset(folder=cfg.data_path, files=get_files(cfg.csv_val), crop_frames=cfg.input_size[1], random_crop=True) \
+ 
+-from engine_pretrain import train_one_epoch
++    val_ds = SpectrogramDataset(folder=cfg.data_path, files=get_files_no_sort(cfg.csv_val), crop_frames=cfg.input_size[1], random_crop=True) \
 +        if cfg.csv_val else None
 +
 +    return ds, val_ds
-+
- 
--from engine_pretrain import train_one_epoch
  
  
  def get_args_parser():
@@ -977,6 +981,9 @@
                          help='Use (per-patch) normalized pixels as targets for computing loss')
 -    parser.set_defaults(norm_pix_loss=False)
 +    parser.set_defaults(norm_pix_loss=True)
++
++    parser.add_argument('--cont_mask', default=0, type=int,
++                        help='Use random 1-d (continuous) masking scheme. 0:off, 0<:# of frames to make them continuous.')
  
      # Optimizer parameters
      parser.add_argument('--weight_decay', type=float, default=0.05,
@@ -1022,7 +1029,7 @@
                          help='path where to tensorboard log')
      parser.add_argument('--device', default='cuda',
                          help='device to use for training / testing')
-@@ -87,7 +209,9 @@
+@@ -87,7 +211,9 @@
  
      parser.add_argument('--start_epoch', default=0, type=int, metavar='N',
                          help='start epoch')
@@ -1033,7 +1040,7 @@
      parser.add_argument('--pin_mem', action='store_true',
                          help='Pin CPU memory in DataLoader for more efficient (sometimes) transfer to GPU.')
      parser.add_argument('--no_pin_mem', action='store_false', dest='pin_mem')
-@@ -96,7 +220,7 @@
+@@ -96,7 +222,7 @@
      # distributed training parameters
      parser.add_argument('--world_size', default=1, type=int,
                          help='number of distributed processes')
@@ -1042,7 +1049,7 @@
      parser.add_argument('--dist_on_itp', action='store_true')
      parser.add_argument('--dist_url', default='env://',
                          help='url used to set up distributed training')
-@@ -104,9 +228,38 @@
+@@ -104,9 +230,38 @@
      return parser
  
  
@@ -1083,7 +1090,7 @@
      print('job dir: {}'.format(os.path.dirname(os.path.realpath(__file__))))
      print("{}".format(args).replace(', ', ',\n'))
  
-@@ -119,14 +272,8 @@
+@@ -119,14 +274,8 @@
  
      cudnn.benchmark = True
  
@@ -1100,7 +1107,7 @@
  
      if True:  # args.distributed:
          num_tasks = misc.get_world_size()
-@@ -143,6 +290,8 @@
+@@ -143,6 +292,8 @@
          log_writer = SummaryWriter(log_dir=args.log_dir)
      else:
          log_writer = None
@@ -1109,7 +1116,7 @@
  
      data_loader_train = torch.utils.data.DataLoader(
          dataset_train, sampler=sampler_train,
-@@ -151,53 +300,83 @@
+@@ -151,53 +302,86 @@
          pin_memory=args.pin_mem,
          drop_last=True,
      )
@@ -1128,6 +1135,9 @@
 +    model = models_mae.__dict__[args.model](img_size=args.input_size, patch_size=args.patch_size, decoder_depth=args.decoder_depth,
 +        norm_pix_loss=args.norm_pix_loss, loss_type=args.loss_fn, target_layers=args.target_layers, loss_m2d=args.loss_m2d, loss_off=args.loss_off,
 +        off_emb_dim=dataset_train.one_hot_dim, norm_stats=dataset_train.norm_stats)
++
++    if args.cont_mask > 0:
++        model.set_random_1d_mask(args.cont_mask)
  
      model.to(device)
  
@@ -1207,7 +1217,7 @@
  
          log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
                          'epoch': epoch,}
-@@ -207,15 +386,71 @@
+@@ -207,15 +391,72 @@
                  log_writer.flush()
              with open(os.path.join(args.output_dir, "log.txt"), mode="a", encoding="utf-8") as f:
                  f.write(json.dumps(log_stats) + "\n")
@@ -1249,6 +1259,7 @@
 +    'loss_off': (1.0, 'lo', 'z'),
 +    'noise_ratio': (0.0, 'nr', 'z'),
 +    'min_ds_size': (10000, 'dn', 'asis'),
++    'cont_mask': (0, 'C', 'asis'),
 +    'epochs': (0, '-e', 'asis'),
 +}
  
@@ -1655,8 +1666,8 @@
 \ ファイル末尾に改行がありません
 +    return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
 --- _org/m2d/models_mae.py	2023-07-07 10:22:30.217586685 +0900
-+++ m2d/models_mae.py	2024-04-10 22:43:58.024290481 +0900
-@@ -9,14 +9,84 @@
++++ m2d/models_mae.py	2024-05-14 12:01:24.833942348 +0900
+@@ -9,14 +9,111 @@
  # DeiT: https://github.com/facebookresearch/deit
  # --------------------------------------------------------
  
@@ -1740,10 +1751,37 @@
 +    len_keep = (mask[0] == 0).sum()
 +    # print(len_keep, mask[:2])
 +    return ids_shuffle, len_keep
++
++
++def make_one_1dmask(total_frames=800//2, mask_ratio=0.6, one_mask_frames=20):
++    M = int(total_frames * mask_ratio)
++    mask = np.zeros(total_frames, dtype=np.int8)
++    # Mask frames more than M, number of frames to mask.
++    while mask.sum() < M:
++        i = np.random.randint(low=0, high=total_frames)
++        mask[i:i+one_mask_frames] = 1
++    # Unmask frames from the tail to adjust total masked frames to M.
++    n_unmask = mask.sum() - M
++    if n_unmask > 0:
++        j_unmask = np.where(mask == 1)[0][-n_unmask:]
++        mask[j_unmask] = 0
++    return mask
++
++def random_1d_mask(shape, mask_ratio=0.6, device='cuda', one_mask_frames=20//2):
++    B, F, T = shape
++    mask = np.zeros((B, T), dtype=np.int8)
++    for i in range(B):
++        mask[i] = make_one_1dmask(total_frames=T, mask_ratio=mask_ratio, one_mask_frames=one_mask_frames)
++    mask = np.tile(mask, (1, F))
++    mask = torch.tensor(mask).to(device)
++
++    ids_shuffle = torch.argsort(mask.view(B, -1), dim=1)
++    len_keep = (mask[0] == 0).sum()
++    return ids_shuffle, len_keep
  
  
  class MaskedAutoencoderViT(nn.Module):
-@@ -25,8 +95,11 @@
+@@ -25,8 +122,11 @@
      def __init__(self, img_size=224, patch_size=16, in_chans=3,
                   embed_dim=1024, depth=24, num_heads=16,
                   decoder_embed_dim=512, decoder_depth=8, decoder_num_heads=16,
@@ -1756,7 +1794,7 @@
  
          # --------------------------------------------------------------------------
          # MAE encoder specifics
-@@ -37,7 +110,7 @@
+@@ -37,7 +137,7 @@
          self.pos_embed = nn.Parameter(torch.zeros(1, num_patches + 1, embed_dim), requires_grad=False)  # fixed sin-cos embedding
  
          self.blocks = nn.ModuleList([
@@ -1765,7 +1803,7 @@
              for i in range(depth)])
          self.norm = norm_layer(embed_dim)
          # --------------------------------------------------------------------------
-@@ -51,24 +124,50 @@
+@@ -51,24 +151,54 @@
          self.decoder_pos_embed = nn.Parameter(torch.zeros(1, num_patches + 1, decoder_embed_dim), requires_grad=False)  # fixed sin-cos embedding
  
          self.decoder_blocks = nn.ModuleList([
@@ -1792,6 +1830,10 @@
 +    def set_random_structured_mask(self):
 +        print('using random_structured_mask().')
 +        self._random_mask_fn = random_structured_mask
++
++    def set_random_1d_mask(self, one_mask_frames=20//2):
++        print(f'using random_1d_mask(one_mask_frames={one_mask_frames}).')
++        self._random_mask_fn = partial(random_1d_mask, one_mask_frames=one_mask_frames)
 +
 +    def patch_size(self):
 +        return self.patch_embed.proj.kernel_size
@@ -1820,7 +1862,7 @@
          self.decoder_pos_embed.data.copy_(torch.from_numpy(decoder_pos_embed).float().unsqueeze(0))
  
          # initialize patch_embed like nn.Linear (instead of nn.Conv2d)
-@@ -94,46 +193,63 @@
+@@ -94,46 +224,63 @@
  
      def patchify(self, imgs):
          """
@@ -1906,7 +1948,7 @@
  
          # keep the first subset
          ids_keep = ids_shuffle[:, :len_keep]
-@@ -147,15 +263,22 @@
+@@ -147,15 +294,22 @@
  
          return x_masked, mask, ids_restore
  
@@ -1932,7 +1974,7 @@
  
          # append cls token
          cls_token = self.cls_token + self.pos_embed[:, :1, :]
-@@ -163,12 +286,31 @@
+@@ -163,12 +317,31 @@
          x = torch.cat((cls_tokens, x), dim=1)
  
          # apply Transformer blocks
@@ -1964,7 +2006,7 @@
      def forward_decoder(self, x, ids_restore):
          # embed tokens
          x = self.decoder_embed(x)
-@@ -197,8 +339,8 @@
+@@ -197,8 +370,8 @@
  
      def forward_loss(self, imgs, pred, mask):
          """
@@ -1975,7 +2017,7 @@
          mask: [N, L], 0 is keep, 1 is remove, 
          """
          target = self.patchify(imgs)
-@@ -208,6 +350,9 @@
+@@ -208,6 +381,9 @@
              target = (target - mean) / (var + 1.e-6)**.5
  
          loss = (pred - target) ** 2
@@ -1985,7 +2027,7 @@
          loss = loss.mean(dim=-1)  # [N, L], mean loss per patch
  
          loss = (loss * mask).sum() / mask.sum()  # mean loss on removed patches
-@@ -219,6 +364,17 @@
+@@ -219,6 +395,17 @@
          loss = self.forward_loss(imgs, pred, mask)
          return loss, pred, mask
  
@@ -2003,7 +2045,7 @@
  
  def mae_vit_base_patch16_dec512d8b(**kwargs):
      model = MaskedAutoencoderViT(
-@@ -248,3 +404,681 @@
+@@ -248,3 +435,682 @@
  mae_vit_base_patch16 = mae_vit_base_patch16_dec512d8b  # decoder: 512 dim, 8 blocks
  mae_vit_large_patch16 = mae_vit_large_patch16_dec512d8b  # decoder: 512 dim, 8 blocks
  mae_vit_huge_patch14 = mae_vit_huge_patch14_dec512d8b  # decoder: 512 dim, 8 blocks
@@ -2685,6 +2727,7 @@
 +m2d_x_vit_large_encoder_only = m2d_vit_large_encoder_only
 +m2d_as_vit_large_encoder_only = m2d_vit_large_encoder_only
 +msm_mae_vit_large_encoder_only = m2d_vit_large_encoder_only
++
 --- _org/m2d/pos_embed.py	2023-07-07 10:22:30.217586685 +0900
 +++ m2d/pos_embed.py	2023-07-07 10:22:30.229586731 +0900
 @@ -23,12 +23,13 @@

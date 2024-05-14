@@ -45,7 +45,7 @@ You will find the following folders after the setup.
       /work  -- The data used during the training
     heart-murmur-detection  -- Copy of the repository of the previous study from Walker et al.
       /data  -- The data used for the final test
-    m2d_vit_base-80x608p16x16-221006-mr7_enconly  -- The pre-trained M2D weight
+    m2d_vit_base-80x608p16x16-220930-mr7_enconly  -- The pre-trained M2D weight
     physionet.org  -- The copy of the dataset
     scores   -- The results of our paper
 
@@ -94,14 +94,11 @@ Our code uses [Benjamin-Walker/heart-murmur-detection](https://github.com/Benjam
 
 We used the following command lines.
 
-Please note that the following contains `m2d_vit_base-80x608p16x16-220930-mr7` pre-trained weights, which we actually used while we are providing `m2d_vit_base-80x608p16x16-221006-mr7_enconly` here.
-The latter provides better results, so we replace the weight on the repository.
-
 ```sh
 cd evar
-bash ../bat/m2d_ftcircor.sh ../m2d_vit_base-80x608p16x16-220930-mr7 1 5 7 300
-bash ../bat/m2d_ftcircor.sh ../m2d_vit_base-80x608p16x16-220930-mr7 2 5 7 300
-bash ../bat/m2d_ftcircor.sh ../m2d_vit_base-80x608p16x16-220930-mr7 3 5 7 300
+bash ../bat/m2d_ftcircor.sh ../m2d_vit_base-80x608p16x16-220930-mr7_enconly 1 5 7 300
+bash ../bat/m2d_ftcircor.sh ../m2d_vit_base-80x608p16x16-220930-mr7_enconly 2 5 7 300
+bash ../bat/m2d_ftcircor.sh ../m2d_vit_base-80x608p16x16-220930-mr7_enconly 3 5 7 300
 
 bash ../bat/ast_ftcircor.sh 1 5 42
 bash ../bat/ast_ftcircor.sh 2 5 42
@@ -115,9 +112,9 @@ bash ../bat/cnn14_ftcircor.sh 1 5 42
 bash ../bat/cnn14_ftcircor.sh 2 5 42
 bash ../bat/cnn14_ftcircor.sh 3 5 42
 
-bash ../bat/m2d_ftcircor_rand.sh m2d_vit_base-80x608p16x16 1 5 7
-bash ../bat/m2d_ftcircor_rand.sh m2d_vit_base-80x608p16x16 2 5 7
-bash ../bat/m2d_ftcircor_rand.sh m2d_vit_base-80x608p16x16 3 5 7
+bash ../bat/m2d_ftcircor_rand.sh m2d_vit_base-80x608p16x16-220930-mr7_enconly 1 5 7
+bash ../bat/m2d_ftcircor_rand.sh m2d_vit_base-80x608p16x16-220930-mr7_enconly 2 5 7
+bash ../bat/m2d_ftcircor_rand.sh m2d_vit_base-80x608p16x16-220930-mr7_enconly 3 5 7
 
 bash ../bat/ast_ftcircor_noaug.sh 1 5 42
 bash ../bat/ast_ftcircor_noaug.sh 2 5 42

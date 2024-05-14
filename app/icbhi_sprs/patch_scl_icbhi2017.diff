@@ -1,0 +1,385 @@
+--- _org/app/app_main.py	2024-05-14 09:58:27.909947715 +0900
++++ app/icbhi_sprs/app_main.py	2024-05-14 10:08:03.645092839 +0900
+@@ -1,16 +1,18 @@
+-import os 
++import os
+ import torch
+ import torch.nn as nn
++from pathlib import Path
++import pandas as pd
+ from torchaudio import transforms as T
+ import torch.nn.functional as F
+ from torchinfo import summary
+ from augmentations import SpecAugment
+-from models import CNN6, CNN10, CNN14, Projector, LinearClassifier
++from models import CNN6, CNN10, CNN14, Projector, LinearClassifier, RT_LMS_M2D
+ from dataset import ICBHI, SPRS
+ from utils import Normalize, Standardize
+ from losses import SupConLoss, SupConCELoss
+ from ce import train_ce
+-from hybrid import train_supconce
++# from hybrid import train_supconce
+ from args import args
+ if args.method == 'scl':
+     from scl import train_scl, linear_scl
+@@ -26,12 +28,13 @@
+ elif args.dataset == 'SPRS':
+     DEFAULT_NUM_CLASSES = 7
+ DEFAULT_OUT_DIM = 128 #for ssl embedding space dimension
+-DEFAULT_NFFT = 1024
+-DEFAULT_NMELS = 64
+-DEFAULT_WIN_LENGTH = 1024
+-DEFAULT_HOP_LENGTH = 512
++DEFAULT_NFFT = 400
++DEFAULT_NMELS = 80
++DEFAULT_WIN_LENGTH = 400
++DEFAULT_HOP_LENGTH = 160
+ DEFAULT_FMIN = 50
+-DEFAULT_FMAX = 2000
++DEFAULT_FMAX = 8000
++args.backbone = 'm2d'
+ 
+ # Model definition
+ if args.method == 'sl':
+@@ -52,6 +55,9 @@
+ elif args.backbone == 'cnn14':
+     PATH_TO_WEIGHTS = os.path.join(args.weightspath, 'Cnn14_mAP=0.431.pth')
+     model = CNN14(num_classes=DEFAULT_NUM_CLASSES, do_dropout=args.dropout, embed_only=embed_only, from_scratch=args.scratch, path_to_weights=PATH_TO_WEIGHTS, device=args.device)
++elif args.backbone == 'm2d':
++    model = RT_LMS_M2D(num_classes=DEFAULT_NUM_CLASSES, embed_only=embed_only, weight_file=args.weightspath, training_mask=0.0, freeze_embed=args.freeze_embed, adjust_pos=args.adjust_pos)
++    model = model.to(args.device)
+ s = summary(model, device=args.device)
+ nparams = s.trainable_params
+ 
+@@ -59,7 +65,13 @@
+ melspec = T.MelSpectrogram(n_fft=DEFAULT_NFFT, n_mels=DEFAULT_NMELS, win_length=DEFAULT_WIN_LENGTH, hop_length=DEFAULT_HOP_LENGTH, f_min=DEFAULT_FMIN, f_max=DEFAULT_FMAX).to(args.device)
+ normalize = Normalize()
+ melspec = torch.nn.Sequential(melspec, normalize)
+-standardize = Standardize(device=args.device)
++if True:  ## Switch to False for calculating statistics
++    stat_mean, stat_std = [0.3671, 0.2391] if args.dataset == 'ICBHI' else [0.2000, 0.2094]
++else:
++    print('**** FOR STATS CALCULATION ONLY ****')
++    stat_mean, stat_std = 0., 1.
++print(f'** Using T.MelSpectrogram & Standardize({stat_mean}, std={stat_std}) **')
++standardize = Standardize(mean=stat_mean, std=stat_std, device=args.device)
+ 
+ # Data transformations
+ specaug = SpecAugment(freq_mask=args.freqmask, time_mask=args.timemask, freq_stripes=args.freqstripes, time_stripes=args.timestripes).to(args.device)
+@@ -72,13 +84,29 @@
+     val_ds = ICBHI(data_path=args.datapath, metadatafile=args.metadata, duration=args.duration, split='test', device=args.device, samplerate=args.samplerate, pad_type=args.pad, meta_label=args.metalabel)
+ elif args.dataset == 'SPRS':
+     train_ds = SPRS(data_path=args.datapath, metadatafile=args.metadata, duration=args.duration, split='train', device="cpu", samplerate=args.samplerate, pad_type=args.pad, meta_label=args.metalabel)
+-    if args.mode == 'intra':
++    if args.appmode == 'intra':
+         val_ds = SPRS(data_path=args.datapath, metadatafile=args.metadata, duration=args.duration, split='intra_test', device="cpu", samplerate=args.samplerate, pad_type=args.pad, meta_label=args.metalabel)
+-    elif args.mode == 'inter':
++    elif args.appmode == 'inter':
+         val_ds = SPRS(data_path=args.datapath, metadatafile=args.metadata, duration=args.duration, split='inter_test', device="cpu", samplerate=args.samplerate, pad_type=args.pad, meta_label=args.metalabel)
+ train_loader = torch.utils.data.DataLoader(train_ds, batch_size=args.bs, shuffle=True)
+ val_loader = torch.utils.data.DataLoader(val_ds, batch_size=args.bs, shuffle=False)
+ 
++# ***** Calculating statistics of your dataset *****
++# 1. Change True to False in "if True:" above.
++# 2. Change the following False to True
++# 3. Run: python app_main.py --dataset ICBHI --datapath data/ICBHI --weightspath ../m2d_vit_base-80x200p16x4-230529/random
++#     or  python app_main.py --dataset SPRS --datapath data/SPRS --weightspath ../m2d_vit_base-80x200p16x4-230529/random
++if False:
++    Xs = []
++    for X, *_ in train_loader:
++        with torch.no_grad():
++            X = train_transform(X.to('cuda'))
++        Xs.append(X.cpu())
++    X = torch.vstack(Xs)
++    print(X.mean(), X.std())
++    import pdb; pdb.set_trace()
++    exit(0)
++
+ ### Optimizer
+ if METHOD == 'sl':
+     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.wd)
+@@ -105,8 +133,9 @@
+ else:
+     criterion_ce = nn.CrossEntropyLoss()
+ 
++print(args)
+ if METHOD == 'sl':
+-    history = train_ce(model, train_loader, val_loader, train_transform, val_transform, criterion_ce, optimizer, args.epochs, scheduler)
++    history = train_ce(model, train_loader, val_loader, train_transform, val_transform, criterion_ce, optimizer, args.epochs, scheduler, DEFAULT_NUM_CLASSES, args.split_iter)
+     del model
+ 
+ elif METHOD == 'scl':
+@@ -126,5 +155,38 @@
+     history = train_supconce(model, projector, classifier, train_loader, val_loader, train_transform, val_transform, criterion, criterion_ce, optimizer, args.epochs, scheduler)
+     del model; del projector; del classifier
+ 
++report, (best_sp, best_se, best_icbhi_score, best_weight), train_losses, val_losses, train_se_scores, train_sp_scores, train_icbhi_scores, train_acc_scores, val_se_scores, val_sp_scores, val_icbhi_scores, val_acc_scores = history
++scores_csv = Path('results')/(str(args.dataset).lower() + '-scores.csv')
++scores_csv.parent.mkdir(parents=True, exist_ok=True)
++weight_name = Path(args.weightspath).parent.name + '_' + Path(args.weightspath).stem
++model_name = f'{args.backbone}-{METHOD}-{weight_name}-lr{args.lr}-bs{args.bs}'
++if args.split_iter > 1: model_name += f's{args.split_iter}'
++if args.freeze_embed: model_name += 'Z'
++if args.adjust_pos: model_name += 'P'
++text_all_args = str(dict(mode=model_name, **dict(vars(args))))
++report = f'{model_name}: {report}'
++print(report)
++
++weight_path = Path('results/checkpoints')
++weight_path.mkdir(parents=True, exist_ok=True)
++torch.save(best_weight, weight_path/(model_name + '.pth'))
++
++# scores
++try:
++    dforg = pd.read_csv(scores_csv)
++except:
++    print(f'Create a new {scores_csv}')
++    dforg = pd.DataFrame()
++df = pd.DataFrame(dict(model=[model_name], best_sp=[best_sp], best_se=[best_se], best_icbhi_score=[best_icbhi_score], report=[report], args=[text_all_args]))
++pd.concat([dforg, df]).to_csv(scores_csv, index=None)
++
++# logs
++epoch_logs = dict(train_losses=train_losses, val_losses=val_losses, train_se_scores=train_se_scores, train_sp_scores=train_sp_scores,
++         train_icbhi_scores=train_icbhi_scores, train_acc_scores=train_acc_scores, val_se_scores=val_se_scores,
++         val_sp_scores=val_sp_scores, val_icbhi_scores=val_icbhi_scores, val_acc_scores=val_acc_scores)
++df = pd.DataFrame(epoch_logs)
++Path('results/logs').mkdir(parents=True, exist_ok=True)
++df.to_csv(f'results/logs/{weight_name}.csv')
++
+ del train_ds; del val_ds
+-del train_loader; del val_loader
+\ ファイル末尾に改行がありません
++del train_loader; del val_loader
+--- _org/app/models.py	2024-05-14 10:06:11.612480963 +0900
++++ app/icbhi_sprs/models.py	2024-05-14 10:01:31.634951532 +0900
+@@ -1,3 +1,5 @@
++import sys
++sys.path.append('../..')
+ import torch
+ import torch.nn as nn
+ import torch.nn.functional as F
+@@ -288,8 +290,43 @@
+ def cnn14(**kwargs):
+     return CNN14(**kwargs)
+     
++
++from m2d.runtime_audio import RuntimeM2D, Config
++class RT_LMS_M2D(RuntimeM2D):
++    def __init__(self, num_classes=4, embed_only=False, training_mask=0.0, weight_file='m2d_vit_base-80x608p16x16-220930-mr7/checkpoint-300.pth', freeze_embed=None, adjust_pos=False):
++        cfg = Config()
++        if adjust_pos:
++            cfg.dur_frames = 801
++        super().__init__(cfg=cfg, weight_file=weight_file, training_mask=training_mask, encoder_only=True, freeze_embed=freeze_embed)
++        self.embed_only = embed_only
++        if not embed_only:
++            self.linear = nn.Linear(self.cfg.feature_d, num_classes, bias=True)
++        # remove unneeded modules for encoding audio
++        #del self.backbone.decoder_blocks
++        #del self.backbone.target_blocks
++        self.accum_mean, self.accum_std = 0., 1.
++
++    def forward(self, features):
++        # def ema(old, new):
++        #     alpha = 0.999
++        #     return alpha*old + (1 - alpha)*new
++        # _mean, _std = features.mean(), features.std()
++        # self.accum_mean, self.accum_std = ema(self.accum_mean, _mean), ema(self.accum_std, _std)
++        # print(_mean, _std, self.accum_mean, self.accum_std)
++        x = self.encode_lms(features)  # [128, 51, 3840]
++        x = torch.mean(x, dim=1)  # [128, 768]
++        if self.embed_only:
++            return x
++        return self.linear(x)  # [128, num_classes]
++
++
++def m2d(**kwargs):
++    return RT_LMS_M2D(**kwargs)
++
++
+ model_dict = {
+     'cnn6' : [cnn6, 512],
+     'cnn10' : [cnn10, 512],
+     'cnn14' : [cnn14, 2048],
++    'm2d': [m2d, 768*5]
+ }
+--- _org/app/args.py	2024-05-14 10:34:44.317784486 +0900
++++ app/icbhi_sprs/args.py	2024-05-14 10:35:13.997945151 +0900
+@@ -19,7 +19,7 @@
+ 
+ #Data
+ parser.add_argument("--dataset", type=str, default='ICBHI') # which dataset to use ['ICBHI', 'SPRS']
+-parser.add_argument("--mode", type=str, default='inter') # for SPRS dataset, there are two test splits ['inter', 'intra']
++parser.add_argument("--appmode", type=str, default='inter') # for SPRS dataset, there are two test splits ['inter', 'intra']
+ parser.add_argument("--datapath", type=str, default='data/ICBHI') # path of the dataset files
+ parser.add_argument("--metadata", type=str, default='metadata.csv') #metadata file
+ parser.add_argument("--metalabel", type=str, default='sa') #meta label used for mscl, 's' stands for sex, 'a' for age, and 'c' for respiratory class
+@@ -44,4 +44,10 @@
+ parser.add_argument("--alpha", type=float, default=0.5) #tradeoff between cross entropy and nt xent
+ parser.add_argument("--lam", type=float, default=0.75) #tradeoff between scl label and scl metadata
+ 
+-args = parser.parse_args()
+\ ファイル末尾に改行がありません
++#M2D
++parser.add_argument("--freeze_embed", action='store_true') #freeze ViT embedding layer
++parser.add_argument("--adjust_pos", action='store_true')   #adjust positional embedding length
++parser.add_argument("--split_iter", type=int, default=1)   #for a low-memory run, split actual batch size by this number
++
++
++args = parser.parse_args()
+--- _org/app/ce.py	2024-05-14 10:34:44.317784486 +0900
++++ app/icbhi_sprs/ce.py	2024-05-14 10:35:17.561964443 +0900
+@@ -2,35 +2,42 @@
+ import torch
+ from args import args
+ 
+-def train_epoch(model, train_loader, train_transform, criterion, optimizer, scheduler):
++def train_epoch(model, train_loader, train_transform, criterion, optimizer, scheduler, n_classes, K=1):
+     
+-    TP = [0, 0, 0 ,0]
+-    GT = [0, 0, 0, 0]
++    TP = [0 for _ in range(n_classes)]
++    GT = [0 for _ in range(n_classes)]
+ 
+     epoch_loss = 0.0
+ 
+     model.train()
+ 
+-    for data, target, _ in train_loader:
+-        data, target = data.to(args.device), target.to(args.device)
++    for batch_data, batch_target, _ in train_loader:
++        batch_data, batch_target = batch_data.to(args.device), batch_target.to(args.device)
+ 
+         with torch.no_grad():
+-            data_t = train_transform(data) 
++            batch_data_t = train_transform(batch_data)
+         
+         optimizer.zero_grad()
+ 
+-        output = model(data_t)
+-        loss = criterion(output, target)
++        L = len(batch_data_t)
++        D = L // K
++        for i in range(K):
++            data = batch_data_t[i*D:(i+1)*D]
++            target = batch_target[i*D:(i+1)*D]
++
++            output = model(data)
++            loss = criterion(output, target)
+             
+-        epoch_loss += loss.item()
++            epoch_loss += loss.item()
+ 
+-        _, labels_predicted = torch.max(output, dim=1)
++            _, labels_predicted = torch.max(output, dim=1)
+ 
+-        for idx in range(len(TP)):
+-            TP[idx] += torch.logical_and((labels_predicted==idx),(target==idx)).sum().item()
+-            GT[idx] += (target==idx).sum().item()
++            for idx in range(len(TP)):
++                TP[idx] += torch.logical_and((labels_predicted==idx),(target==idx)).sum().item()
++                GT[idx] += (target==idx).sum().item()
+         
+-        loss.backward()
++            loss.backward()
++
+         optimizer.step()
+ 
+     scheduler.step()
+@@ -43,10 +50,10 @@
+ 
+     return epoch_loss, se, sp, icbhi_score, acc
+ 
+-def val_epoch(model, val_loader, val_transform, criterion):
++def val_epoch(model, val_loader, val_transform, criterion, n_classes, K=1):
+ 
+-    TP = [0, 0, 0 ,0]
+-    GT = [0, 0, 0, 0]
++    TP = [0 for _ in range(n_classes)]
++    GT = [0 for _ in range(n_classes)]
+ 
+     epoch_loss = 0.0
+ 
+@@ -54,18 +61,24 @@
+ 
+     with torch.no_grad():
+ 
+-        for data, target, _ in val_loader:
+-            data, target = data.to(args.device), target.to(args.device)
++        for batch_data, batch_target, _ in val_loader:
++            batch_data, batch_target = batch_data.to(args.device), batch_target.to(args.device)
+             
+-            output = model(val_transform(data))
+-            loss = criterion(output, target)
+-            epoch_loss += loss.item()
+-
+-            _, labels_predicted = torch.max(output, dim=1)
+-
+-            for idx in range(len(TP)):
+-                TP[idx] += torch.logical_and((labels_predicted==idx),(target==idx)).sum().item()
+-                GT[idx] += (target==idx).sum().item()
++            L = len(batch_data)
++            D = L // K
++            for i in range(K):
++                data = batch_data[i*D:(i+1)*D]
++                target = batch_target[i*D:(i+1)*D]
++
++                output = model(val_transform(data))
++                loss = criterion(output, target)
++                epoch_loss += loss.item()
++
++                _, labels_predicted = torch.max(output, dim=1)
++
++                for idx in range(len(TP)):
++                    TP[idx] += torch.logical_and((labels_predicted==idx),(target==idx)).sum().item()
++                    GT[idx] += (target==idx).sum().item()
+ 
+ 
+     epoch_loss = epoch_loss / len(val_loader)
+@@ -76,7 +89,7 @@
+ 
+     return epoch_loss, se, sp, icbhi_score, acc
+ 
+-def train_ce(model, train_loader, val_loader, train_transform, val_transform, criterion, optimizer, epochs, scheduler):
++def train_ce(model, train_loader, val_loader, train_transform, val_transform, criterion, optimizer, epochs, scheduler, n_classes, K=1):
+ 
+     train_losses = []; val_losses = []; train_se_scores = []; train_sp_scores = []; train_icbhi_scores = []; train_acc_scores = []; val_se_scores = []; val_sp_scores = []; val_icbhi_scores = []; val_acc_scores = []
+ 
+@@ -86,16 +99,17 @@
+     best_sp = 0
+     best_epoch_acc = 0
+     best_epoch_icbhi = 0
++    best_weight = None
+ 
+     for i in range(1, epochs+1):
+         
+         print(f"Epoch {i}")
+ 
+-        train_loss, train_se, train_sp, train_icbhi_score, train_acc = train_epoch(model, train_loader, train_transform, criterion, optimizer, scheduler)
++        train_loss, train_se, train_sp, train_icbhi_score, train_acc = train_epoch(model, train_loader, train_transform, criterion, optimizer, scheduler, n_classes, K)
+         train_losses.append(train_loss); train_se_scores.append(train_se); train_sp_scores.append(train_sp); train_icbhi_scores.append(train_icbhi_score); train_acc_scores.append(train_acc)
+         print(f"Train loss : {format(train_loss, '.4f')}\tTrain SE : {format(train_se, '.4f')}\tTrain SP : {format(train_sp, '.4f')}\tTrain Score : {format(train_icbhi_score, '.4f')}\tTrain Acc : {format(train_acc, '.4f')}")
+ 
+-        val_loss, val_se, val_sp, val_icbhi_score, val_acc = val_epoch(model, val_loader, val_transform, criterion)
++        val_loss, val_se, val_sp, val_icbhi_score, val_acc = val_epoch(model, val_loader, val_transform, criterion, n_classes, K)
+         val_losses.append(val_loss); val_se_scores.append(val_se); val_sp_scores.append(val_sp); val_icbhi_scores.append(val_icbhi_score); val_acc_scores.append(val_acc)
+         print(f"Val loss : {format(val_loss, '.4f')}\tVal SE : {format(val_se, '.4f')}\tVal SP : {format(val_sp, '.4f')}\tVal Score : {format(val_icbhi_score, '.4f')}\tVal Acc : {format(val_acc, '.4f')}")          
+ 
+@@ -112,11 +126,15 @@
+             best_icbhi_score = val_icbhi_score
+             best_se = val_se
+             best_sp = val_sp
++            best_weight = {k: v.cpu() for k, v in model.state_dict().items()}
+         
+         if best_val_acc < val_acc:
+             best_epoch_acc = i
+             best_val_acc = val_acc
+ 
+-    print(f"best icbhi score is {format(best_icbhi_score, '.4f')} (se:{format(best_se, '.4f')} sp:{format(best_sp, '.4f')}) at epoch {best_epoch_icbhi}")
++        print(f"Val loss : {format(val_loss, '.4f')}\tVal SE : {format(val_se, '.4f')}\tVal SP : {format(val_sp, '.4f')}\tVal Score : {format(val_icbhi_score, '.4f')}\tVal Acc : {format(val_acc, '.4f')} best_icbhi_score so far: {format(best_icbhi_score, '.4f')}")
++
++    report = f"best icbhi score is {format(best_icbhi_score, '.4f')} (se:{format(best_se, '.4f')} sp:{format(best_sp, '.4f')}) at epoch {best_epoch_icbhi}"
++    print(report)
+ 
+-    return train_losses, val_losses, train_se_scores, train_sp_scores, train_icbhi_scores, train_acc_scores, val_se_scores, val_sp_scores, val_icbhi_scores, val_acc_scores
+\ ファイル末尾に改行がありません
++    return report, (best_sp, best_se, best_icbhi_score, best_weight), train_losses, val_losses, train_se_scores, train_sp_scores, train_icbhi_scores, train_acc_scores, val_se_scores, val_sp_scores, val_icbhi_scores, val_acc_scores

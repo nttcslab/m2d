@@ -173,7 +173,7 @@ def eval_main(config_file, task, checkpoint, options='', seed=42, lr=None, hidde
     ) = results
 
     name  = f'{cfg.id}{"" if cfg.weight_file != "" else "/rnd"}-'
-    report = f'Finetuning {name} on {task} -> weighted_accuracy: {weighted_accuracy:.5f}. UAR: {uar:.5f}, recall per class: {accuracy_classes}'
+    report = f'Finetuning {name} on {task} -> weighted_accuracy: {weighted_accuracy:.5f}, UAR: {uar:.5f}, recall per class: {accuracy_classes}'
     report += f', best weight: {checkpoint}, config: {cfg}'
     logging.info(report)
 

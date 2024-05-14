@@ -1,4 +1,6 @@
-![key_visual](key-visual-m2d.jpg)
+<figure>
+  <img src="image-key-visual-m2d.jpg" alt="key_visual", width="60%">
+</figure>
 
 # Masked Modeling Duo (M2D)
 
@@ -13,11 +15,13 @@ This repository provides demo implementations of our paper "[Masked Modeling Duo
 | [m2d_vit_base-80x200p16x4-230529](https://github.com/nttcslab/m2d/releases/download/v0.1.0/m2d_vit_base-80x200p16x4-230529.zip) | General-purpose transfer learning and further pre-training w/ finer time frame. | M2D/0.7 (t.f. 40ms) | ✅ | - |
 | [m2d_vit_base-80x608p16x16-221006-mr7](https://github.com/nttcslab/m2d/releases/download/v0.1.0/m2d_vit_base-80x608p16x16-221006-mr7.zip) | General-purpose transfer learning and further pre-training. | M2D/0.7 | ✅ | - |
 | [m2d_vit_base-80x608p16x16-221006-mr6](https://github.com/nttcslab/m2d/releases/download/v0.1.0/m2d_vit_base-80x608p16x16-221006-mr6.zip) | General-purpose transfer learning and further pre-training. | M2D/0.6 | ✅ | - |
+| [m2d_vit_base-80x608p16x16-221006-mr7_enconly](https://github.com/nttcslab/m2d/releases/download/v0.1.0/m2d_vit_base-80x608p16x16-221006-mr7_enconly.zip) | General-purpose transfer learning. (Encoder only) | M2D/0.7 | N/A | - |
+| [m2d_vit_base-80x608p16x16-220930-mr7_enconly](https://github.com/nttcslab/m2d/releases/download/v0.1.0/m2d_vit_base-80x608p16x16-220930-mr7_enconly.zip) | General-purpose transfer learning. (Encoder only) | M2D/0.7 | N/A | - |
 
 | Weight        | Recommendation  | Description | Fur-PT Ready | AS2M mAP |
 |:--------------|:----------------|:------------|:------:|:--------:|
 | [m2d_as_vit_base-80x1001p16x16p32k-240413_AS-FT_enconly](https://github.com/nttcslab/m2d/releases/download/v0.3.0/m2d_as_vit_base-80x1001p16x16p32k-240413_AS-FT_enconly.zip) | Best for audio tagging (AT) / sound event detection (SED) at 32 kHz.| M2D-AS fine-tuned on AS2M@32kHz | N/A | 0.480 |
-| [m2d_as_vit_base-80x608p16x16p32k-240413_enconly](https://github.com/nttcslab/m2d/releases/download/v0.1.0/m2d_as_vit_base-80x608p16x16p32k-240413_enconly.zip) | General-purpose transfer learning and further pre-training at 32 kHz. | M2D/0.7@32kHz | ✅ | - |
+| [m2d_as_vit_base-80x608p16x16p32k-240413_enconly](https://github.com/nttcslab/m2d/releases/download/v0.1.0/m2d_as_vit_base-80x608p16x16p32k-240413_enconly.zip) | General-purpose transfer learning at 32 kHz. (Encoder only) | M2D-AS@32kHz | N/A | - |
 
 
 ## Quick Start
@@ -49,10 +53,16 @@ print(clip_level.shape)  # torch.Size([3, 3840])
 
 ## Application Resources
 
-- [👉 **Resources for M2D-X Medical (ICBHI2017/SPRSound) applications**](app/icbhi_sprs/README_ICBHI_SPRS.md).
-- [👉 **Resources for M2D Medical (CirCor DigiScope heart sound) application**](app/circor/README.md).
+- [👉 **Resources for M2D-X medical applications (ICBHI2017/SPRSound), further pre-training examples**](app/icbhi_sprs/README_ICBHI_SPRS.md).
+- [👉 **Resources for M2D medical application (CirCor DigiScope heart sound)**](app/circor/README.md).
+- [👉 **Resources for M2D-AS (M2D-X specialized in AudioSet)**](audioset/README.md).
 - [👉 **Resources for M2D-S (M2D-X specialized in Speech)**](speech/README.md).
-- (TBD) Resources for M2D-AS (M2D-X specialized in AudioSet).
+- TBD Preparing one more thing.
+
+A schematic illustration of M2D-X further pre-training:
+<figure>
+  <img src="image-M2D-further-PT.svg" alt="A schematic illustration of M2D-X further pre-training", width="40%">
+</figure>
 
 ## 1. Setup
 
@@ -138,21 +148,22 @@ We used the `all_eval.sh` script to evaluate on all downstream tasks.
 
 ### 2-3. Fine-tuning
 
-TBD -- **New fine-tuning script will be provided.**
+We have fin-tuned our models using the scripts in the `util` folder.
 
-**! OLD command lines !**
-
-We have fin-tuned our models using the following command lines. Replace the `/your/path/to/model.pth` to yours.
+The following examples will fine-tune on each task for three times with the random seed 43, 44, and 45, and the `m2d_vit_base-80x608p16x16-221006-mr7/checkpoint-300.pth`  will be tested. Replace the `/your/path/to/m2d_vit_base-80x608p16x16-221006-mr7` to yours.
 
 ```sh
 cd evar
-python finetune.py config/m2d.yaml as20k weight_file=/your/path/to/model.pth --lr 1.0 --freq_mask 0 --time_mask 0 --training_mask 0.5 --mixup 0.3 --rrc True --seed 0
-python finetune.py config/m2d.yaml esc50 weight_file=/your/path/to/model.pth --lr 0.5 --freq_mask 0 --time_mask 0 --training_mask 0.5 --mixup 0.0 --rrc True --seed 0
-python finetune.py config/m2d.yaml spcv2 weight_file=/your/path/to/model.pth --lr 0.5 --freq_mask 0 --time_mask 0 --training_mask 0.5 --mixup 0.3 --rrc True --seed 0
-python finetune.py config/m2d.yaml vc1 weight_file=/your/path/to/model.pth --optim adamw --lr 0.001 --freq_mask 0 --time_mask 0 --training_mask 0.0 --mixup 0.0 --rrc False --seed 0
+bash (your m2d)/util/ft-as2m.sh /your/path/to/m2d_vit_base-80x608p16x16-221006-mr7 3 42 300
+bash (your m2d)/util/ft-as0k.sh /your/path/to/m2d_vit_base-80x608p16x16-221006-mr7 3 42 300
+bash (your m2d)/util/ft-esc50.sh /your/path/to/m2d_vit_base-80x608p16x16-221006-mr7 3 42 300
+bash (your m2d)/util/ft-spc.sh /your/path/to/m2d_vit_base-80x608p16x16-221006-mr7 3 42 300
+bash (your m2d)/util/ft-vc1.sh /your/path/to/m2d_vit_base-80x608p16x16-221006-mr7 3 42 300
 ```
 
-To allow fine-tuning on a small GPU, add an option to decrease the batch size, for example `--batch_size 64`. You may want to decrease the learning rate (`--lr LR`) when using smaller batches.
+#### NOTE: Please set your data path in the `util/ft-as2m.sh`
+
+The `ft-as2m.sh` requires the path to your log-mel spectrogram AudioSet samples in .npy, configure the script with yours.
 
 ## 3. Pre-training From Scratch
 
