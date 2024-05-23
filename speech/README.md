@@ -70,8 +70,8 @@ The followings are for pre-training high-end models, taking 2.5-3.5 days to comp
 
 ```sh
 OMP_NUM_THREADS=1 torchrun --nproc_per_node=4 -m speech.train_speech --loss_m2d 1. --loss_off .5 --input_size 80x400 --patch_size 80x2 --noise_ratio 0.2
-OMP_NUM_THREADS=1 torchrun --nproc_per_node=4 train_speech.py --loss_m2d 1. --loss_off .5 --input_size 80x512 --patch_size 80x2 --noise_ratio 0.2 --batch_size 256 --accum_iter 2
-OMP_NUM_THREADS=1 torchrun --nproc_per_node=4 train_speech.py --loss_m2d 1. --loss_off .5 --input_size 80x608 --patch_size 80x2 --noise_ratio 0.2 --batch_size 256 --accum_iter 2
+OMP_NUM_THREADS=1 torchrun --nproc_per_node=4 -m speech.train_speech --loss_m2d 1. --loss_off .5 --input_size 80x512 --patch_size 80x2 --noise_ratio 0.2 --batch_size 256 --accum_iter 2
+OMP_NUM_THREADS=1 torchrun --nproc_per_node=4 -m speech.train_speech --loss_m2d 1. --loss_off .5 --input_size 80x608 --patch_size 80x2 --noise_ratio 0.2 --batch_size 256 --accum_iter 2
 ```
 
 #### 3-2-1. Major pre-training options

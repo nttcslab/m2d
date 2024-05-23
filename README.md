@@ -8,6 +8,8 @@ This repository provides demo implementations of our paper "[Masked Modeling Duo
 
 ## Pre-trained/Fine-tuned Weights
 
+### AudioSet pre-trained weights
+
 | Weight        | Recommendation  | Description | Fur-PT Ready | AS2M mAP |
 |:--------------|:----------------|:------------|:------:|:--------:|
 | [m2d_as_vit_base-80x1001p16x16-240213_AS-FT_enconly](https://github.com/nttcslab/m2d/releases/download/v0.3.0/m2d_as_vit_base-80x1001p16x16-240213_AS-FT_enconly.zip) | Best for audio tagging (AT) / sound event detection (SED).| M2D-AS fine-tuned on AS2M | N/A | 0.485 |
@@ -22,6 +24,14 @@ This repository provides demo implementations of our paper "[Masked Modeling Duo
 |:--------------|:----------------|:------------|:------:|:--------:|
 | [m2d_as_vit_base-80x1001p16x16p32k-240413_AS-FT_enconly](https://github.com/nttcslab/m2d/releases/download/v0.3.0/m2d_as_vit_base-80x1001p16x16p32k-240413_AS-FT_enconly.zip) | Best for audio tagging (AT) / sound event detection (SED) at 32 kHz.| M2D-AS fine-tuned on AS2M@32kHz | N/A | 0.480 |
 | [m2d_as_vit_base-80x608p16x16p32k-240413_enconly](https://github.com/nttcslab/m2d/releases/download/v0.1.0/m2d_as_vit_base-80x608p16x16p32k-240413_enconly.zip) | General-purpose transfer learning at 32 kHz. (Encoder only) | M2D-AS@32kHz | N/A | - |
+
+### LibriSpeech pre-trained weights
+
+| Weight        | Recommendation  | Description | Fur-PT Ready | AS2M mAP |
+|:--------------|:----------------|:------------|:------:|:--------:|
+| [m2d_s_vit_base-80x608p80x2-230220](https://github.com/nttcslab/m2d/releases/download/v0.2.0/m2d_s_vit_base-80x608p80x2-230220.zip) | Speech transfer learning and further pre-training. | M2D-S/0.6 6-s input | ✅ | - |
+| [m2d_s_vit_base-80x512p80x2-230301](https://github.com/nttcslab/m2d/releases/download/v0.2.0/m2d_s_vit_base-80x512p80x2-230301.zip) | Speech transfer learning and further pre-training. | M2D-S/0.6 5-s input | ✅ | - |
+| [m2d_s_vit_base-80x400p80x2-230201](https://github.com/nttcslab/m2d/releases/download/v0.2.0/m2d_s_vit_base-80x400p80x2-230201.zip) | Speech transfer learning and further pre-training. | M2D-S/0.6 4-s input | ✅ | - |
 
 
 ## Quick Start
@@ -52,6 +62,11 @@ print(clip_level.shape)  # torch.Size([3, 3840])
 ```
 
 ## Application Resources
+
+👉 [**Guideline document (alpha) is available.**](Guideline_app.md) -- Our guidelines may provide useful information on how to plan further pre-train your models.
+<figure>
+  <a href="Guideline_app.md"><img src="image-AppGuidelineChart.png" alt="A guideline chart", width="30%"></a>
+</figure>
 
 - [👉 **Resources for M2D-X medical applications (ICBHI2017/SPRSound), further pre-training examples**](app/icbhi_sprs/README_ICBHI_SPRS.md).
 - [👉 **Resources for M2D medical application (CirCor DigiScope heart sound)**](app/circor/README.md).
@@ -211,6 +226,19 @@ The training loop automatically evaluates the pre-trained model.
 
 - During pre-training, `train_audio.py` runs a script called `quick_eval.sh` as a sub-process. You can edit `quick_eval.sh` for your purposes.
 - When the pre-training is finished, the final evaluation script `all_eval.sh` is executed.
+
+### 3-4. Complete pre-training command lines
+
+The command lines for pre-training full-performance models follow:
+
+```sh
+# M2D
+OMP_NUM_THREADS=1 torchrun --nproc_per_node=4 -m train_audio --input_size 80x608 --patch_size 16x16 --epochs 300 --batch_size 512 --accum_iter 1 --save_freq 50 --seed 3 --model m2d_vit_base --csv_main data/files_audioset.csv --data_path /path/to/your/data --loss_off 0.
+# M2D-AS
+OMP_NUM_THREADS=1 torchrun --nproc_per_node=4 -m audioset.train_as --input_size 80x608 --patch_size 16x16 --epochs 300 --batch_size 512 --accum_iter 1 --save_freq 50 --seed 3 --data_path /path/to/your/data --loss_off 1.
+```
+
+Will add the details (T.B.D)
 
 ## 4. Other Pre-trained/fine-tuned Weights
 
