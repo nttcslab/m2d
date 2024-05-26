@@ -98,7 +98,7 @@ We pre-train the pre-trained model again to make it more suitable for the target
 ```sh
 cd (your M2D root folder)
 
-CUDA_VISIBLE_DEVICES=0 python train_audio.py --epochs 600 --resume m2d_vit_base-80x200p16x4-230529/checkpoint-300.pth --model m2d_x_vit_base --input_size 80x200 --patch_size 16x4 --batch_size 64 --accum_iter 2 --csv_main data/files_icbhi2017.csv --csv_bg_noise data/files_f_s_d_5_0_k.csv --noise_ratio 0.3 --save_freq 100 --eval_after 600 --seed 6 --teacher m2d_vit_base-80x200p16x4-230529/checkpoint-300.pth --blr 3e-4 --loss_off 1.
+CUDA_VISIBLE_DEVICES=0 python train_audio.py --epochs 600 --resume m2d_vit_base-80x200p16x4-230529/checkpoint-300.pth --model m2d_x_vit_base --input_size 80x200 --patch_size 16x4 --batch_size 64 --accum_iter 2 --csv_main data/files_icbhi2017.csv --csv_bg_noise data/files_f_s_d_5_0_k.csv --noise_ratio 0.3 --save_freq 100 --eval_after 600 --seed 6 --teacher m2d_vit_base-80x200p16x4-230529/checkpoint-300.pth --blr 3e-4 --loss_off 1. --min_ds_size 10000
 ```
 
 When you finish, you will find the further pre-trained model folder named `m2d_x_vit_base-80x200p16x4p16k-240514-MdfiDdffsd50ks6bs128a2lo1nr.3-e600` (`240514` will be the date you run).
@@ -199,19 +199,25 @@ The command lines for reproduction follows.
 
 #### Further pre-training
 
+We explain the details in the [Guide_app.md](Guide_app.md).
+
 ```sh
 # M2D-X, noise_ratio 0.3
-CUDA_VISIBLE_DEVICES=0 python train_audio.py --epochs 600 --resume m2d_vit_base-80x200p16x4-230529/checkpoint-300.pth --model m2d_x_vit_base --input_size 80x200 --patch_size 16x4 --batch_size 64 --accum_iter 2 --csv_main data/files_icbhi2017.csv --csv_bg_noise data/files_f_s_d_5_0_k.csv --noise_ratio 0.3 --save_freq 100 --eval_after 600 --seed 6 --teacher m2d_vit_base-80x200p16x4-230529/checkpoint-300.pth --blr 3e-4 --loss_off 1.
+CUDA_VISIBLE_DEVICES=0 python train_audio.py --epochs 600 --resume m2d_vit_base-80x200p16x4-230529/checkpoint-300.pth --model m2d_x_vit_base --input_size 80x200 --patch_size 16x4 --batch_size 64 --accum_iter 2 --csv_main data/files_icbhi2017.csv --csv_bg_noise data/files_f_s_d_5_0_k.csv --noise_ratio 0.3 --save_freq 100 --eval_after 600 --seed 6 --teacher m2d_vit_base-80x200p16x4-230529/checkpoint-300.pth --blr 3e-4 --loss_off 1. --min_ds_size 10000
 # M2D-X, noise_ratio 0.0
-CUDA_VISIBLE_DEVICES=0 python train_audio.py --epochs 600 --resume m2d_vit_base-80x200p16x4-230529/checkpoint-300.pth --model m2d_x_vit_base --input_size 80x200 --patch_size 16x4 --batch_size 64 --accum_iter 2 --csv_main data/files_icbhi2017.csv --csv_bg_noise data/files_f_s_d_5_0_k.csv --noise_ratio 0.0 --save_freq 100 --eval_after 600 --seed 6 --teacher m2d_vit_base-80x200p16x4-230529/checkpoint-300.pth --blr 3e-4 --loss_off 1.
+CUDA_VISIBLE_DEVICES=0 python train_audio.py --epochs 600 --resume m2d_vit_base-80x200p16x4-230529/checkpoint-300.pth --model m2d_x_vit_base --input_size 80x200 --patch_size 16x4 --batch_size 64 --accum_iter 2 --csv_main data/files_icbhi2017.csv --csv_bg_noise data/files_f_s_d_5_0_k.csv --noise_ratio 0.0 --save_freq 100 --eval_after 600 --seed 6 --teacher m2d_vit_base-80x200p16x4-230529/checkpoint-300.pth --blr 3e-4 --loss_off 1. --min_ds_size 10000
 
 We specifically leave our command lines for the random seed 3. We did them for all four seeds. 
 
 # M2D, noise_ratio 0.3
-CUDA_VISIBLE_DEVICES=0 python train_audio.py --epochs 600 --resume m2d_vit_base-80x200p16x4-230529/checkpoint-300.pth --model m2d_vit_base --input_size 80x200 --patch_size 16x4 --batch_size 64 --accum_iter 2 --csv_main data/files_icbhi2017.csv --csv_bg_noise data/files_f_s_d_5_0_k.csv --noise_ratio 0.3 --save_freq 100 --eval_after 600 --seed 3 --blr 3e-4 --loss_off 0.
+CUDA_VISIBLE_DEVICES=0 python train_audio.py --epochs 600 --resume m2d_vit_base-80x200p16x4-230529/checkpoint-300.pth --model m2d_vit_base --input_size 80x200 --patch_size 16x4 --batch_size 64 --accum_iter 2 --csv_main data/files_icbhi2017.csv --csv_bg_noise data/files_f_s_d_5_0_k.csv --noise_ratio 0.3 --save_freq 100 --eval_after 600 --seed 3 --blr 3e-4 --loss_off 0. --min_ds_size 10000
 # M2D, noise_ratio 0.0
-CUDA_VISIBLE_DEVICES=0 python train_audio.py --epochs 600 --resume m2d_vit_base-80x200p16x4-230529/checkpoint-300.pth --model m2d_vit_base --input_size 80x200 --patch_size 16x4 --batch_size 64 --accum_iter 2 --csv_main data/files_icbhi2017.csv --csv_bg_noise data/files_f_s_d_5_0_k.csv --noise_ratio 0.0 --save_freq 100 --eval_after 600 --seed 3 --blr 3e-4 --loss_off 0.
+CUDA_VISIBLE_DEVICES=0 python train_audio.py --epochs 600 --resume m2d_vit_base-80x200p16x4-230529/checkpoint-300.pth --model m2d_vit_base --input_size 80x200 --patch_size 16x4 --batch_size 64 --accum_iter 2 --csv_main data/files_icbhi2017.csv --csv_bg_noise data/files_f_s_d_5_0_k.csv --noise_ratio 0.0 --save_freq 100 --eval_after 600 --seed 3 --blr 3e-4 --loss_off 0. --min_ds_size 10000
 ```
+
+Example log is available for M2D-X, noise_ratio 0.3 in the [example_logs.zip](https://github.com/nttcslab/m2d/releases/download/v0.1.0/example_logs.zip).
+Find `examples/logs/log_m2d_x_vit_base-80x200p16x4-230814-Ddffsd50ks5blr0003bs128a2nr.3-e600.out` from the zip file.
+
 
 #### Fine-tuning
 

@@ -15,6 +15,7 @@ This repository provides demo implementations of our paper "[Masked Modeling Duo
 | [m2d_as_vit_base-80x1001p16x16-240213_AS-FT_enconly](https://github.com/nttcslab/m2d/releases/download/v0.3.0/m2d_as_vit_base-80x1001p16x16-240213_AS-FT_enconly.zip) | Best for audio tagging (AT) / sound event detection (SED).| M2D-AS fine-tuned on AS2M | N/A | 0.485 |
 | [m2d_vit_base-80x1001p16x16-221006-mr7_as_46ab246d](https://github.com/nttcslab/m2d/releases/download/v0.3.0/m2d_vit_base-80x1001p16x16-221006-mr7_as_46ab246d.zip) | 2nd best for AT/SED. | M2D/0.7 fine-tuned on AS2M | N/A | 0.479 |
 | [m2d_vit_base-80x200p16x4-230529](https://github.com/nttcslab/m2d/releases/download/v0.1.0/m2d_vit_base-80x200p16x4-230529.zip) | General-purpose transfer learning and further pre-training w/ finer time frame. | M2D/0.7 (t.f. 40ms) | ✅ | - |
+| [m2d_as_vit_base-80x608p16x16-240213](https://github.com/nttcslab/m2d/releases/download/v0.1.0/m2d_as_vit_base-80x608p16x16-240213.zip) | General-purpose transfer learning and further pre-training, especially when application data is closer to the AudioSet ontology. | M2D-AS | ✅ | - |
 | [m2d_vit_base-80x608p16x16-221006-mr7](https://github.com/nttcslab/m2d/releases/download/v0.1.0/m2d_vit_base-80x608p16x16-221006-mr7.zip) | General-purpose transfer learning and further pre-training. | M2D/0.7 | ✅ | - |
 | [m2d_vit_base-80x608p16x16-221006-mr6](https://github.com/nttcslab/m2d/releases/download/v0.1.0/m2d_vit_base-80x608p16x16-221006-mr6.zip) | General-purpose transfer learning and further pre-training. | M2D/0.6 | ✅ | - |
 | [m2d_vit_base-80x608p16x16-221006-mr7_enconly](https://github.com/nttcslab/m2d/releases/download/v0.1.0/m2d_vit_base-80x608p16x16-221006-mr7_enconly.zip) | General-purpose transfer learning. (Encoder only) | M2D/0.7 | N/A | - |
@@ -63,9 +64,9 @@ print(clip_level.shape)  # torch.Size([3, 3840])
 
 ## Application Resources
 
-👉 [**Guideline document (alpha) is available.**](Guideline_app.md) -- Our guidelines may provide useful information on how to plan further pre-train your models.
+👉 [**Application Guide (alpha) is available.**](Guide_app.md) -- Our guidelines may provide useful information on how to plan further pre-train your models.
 <figure>
-  <a href="Guideline_app.md"><img src="image-AppGuidelineChart.png" alt="A guideline chart", width="30%"></a>
+  <a href="Guide_app.md"><img src="image-AppGuideChart.png" alt="A guide chart", width="30%"></a>
 </figure>
 
 - [👉 **Resources for M2D-X medical applications (ICBHI2017/SPRSound), further pre-training examples**](app/icbhi_sprs/README_ICBHI_SPRS.md).
@@ -238,7 +239,9 @@ OMP_NUM_THREADS=1 torchrun --nproc_per_node=4 -m train_audio --input_size 80x608
 OMP_NUM_THREADS=1 torchrun --nproc_per_node=4 -m audioset.train_as --input_size 80x608 --patch_size 16x16 --epochs 300 --batch_size 512 --accum_iter 1 --save_freq 50 --seed 3 --data_path /path/to/your/data --loss_off 1.
 ```
 
-Will add the details (T.B.D)
+Example logs are available: [example_logs.zip](https://github.com/nttcslab/m2d/releases/download/v0.1.0/example_logs.zip).
+
+We explain the details in the [Guide_app.md](Guide_app.md).
 
 ## 4. Other Pre-trained/fine-tuned Weights
 
