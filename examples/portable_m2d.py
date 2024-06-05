@@ -153,6 +153,22 @@ def reformat_ckpt_keys(checkpoint):
     return new_ckpt
 
 
+def make_it_CLAP(model, checkpoint):
+    # Add projectors if needed
+    if 'audio_proj.0.weight' in checkpoint.keys():
+        proj_hidden_dim = embed_dim = checkpoint['audio_proj.0.weight'].shape[1]
+        model.audio_proj = torch.nn.Sequential(
+            torch.nn.Linear(embed_dim, proj_hidden_dim),
+            torch.nn.ReLU(),
+            torch.nn.Linear(proj_hidden_dim, embed_dim),
+        )
+        if 'text_proj.weight' in checkpoint.keys():
+            dim = checkpoint['text_proj.weight'].shape
+            model.text_proj = torch.nn.Linear(dim[1], dim[0])
+        else:
+            model.text_proj = torch.nn.Identity()
+
+
 def get_backbone(args, weight_file):
     args.input_size, args.patch_size, args.sr, args.model = parse_sizes_by_name(Path(weight_file).parent.name)
 
@@ -168,6 +184,9 @@ def get_backbone(args, weight_file):
     model = LocalViT(
         in_chans=1, img_size=args.input_size, patch_size=args.patch_size, embed_dim=768, depth=12, num_heads=12,
         mlp_ratio=4, norm_layer=partial(torch.nn.LayerNorm, eps=1e-6))
+
+    # Modify the model if it should be a M2D-CLAP.
+    make_it_CLAP(model, checkpoint)
 
     # Load weights.
     dropped = drop_non_model_weights(model, checkpoint, weight_file)
@@ -328,3 +347,44 @@ class PortableM2D(torch.nn.Module):
             x = self.head_norm(x.transpose(-1, -2)).transpose(-2, -1)
             x = self.head(x)
         return x, ts
+
+    def encode_clap_audio(self, batch_audio):
+        audio_embeddings = self.forward(batch_audio)
+        audio_embeddings = audio_embeddings.mean(dim=-2)
+        audio_embeddings = self.backbone.audio_proj(audio_embeddings)
+        return audio_embeddings
+
+    def encode_clap_text(self, batch_text, truncate=False):
+        if not hasattr(self, 'text_encoder'):
+            self.text_encoder = GTETextEncoder()
+        text_embeddings = self.text_encoder(batch_text, truncate=truncate)
+        text_embeddings = self.backbone.text_proj(text_embeddings)
+        text_embeddings = text_embeddings.detach().cpu().to(torch.float)
+        return text_embeddings
+
+
+# For the CLAP models
+
+class GTETextEncoder:
+    def __init__(self, clip_weight="thenlper/gte-base"):
+        from transformers import AutoTokenizer, AutoModel
+        import os
+        os.environ["TOKENIZERS_PARALLELISM"] = "true"  # To suppress warnings.
+
+        self.tokenizer = AutoTokenizer.from_pretrained(clip_weight)
+        self.model = AutoModel.from_pretrained(clip_weight)
+
+    def __call__(self, texts, truncate=True, max_length=512):
+        def average_pool(last_hidden_states, attention_mask):
+            last_hidden = last_hidden_states.masked_fill(~attention_mask[..., None].bool(), 0.0)
+            return last_hidden.sum(dim=1) / attention_mask.sum(dim=1)[..., None]
+
+        with torch.no_grad():
+            device = next(self.model.parameters()).device
+            batch_dict = self.tokenizer(texts, max_length=max_length, padding=True, truncation=truncate, return_tensors='pt')
+            batch_dict['input_ids'] = batch_dict['input_ids'].to(device)
+            batch_dict['token_type_ids'] = batch_dict['token_type_ids'].to(device)
+            batch_dict['attention_mask'] = batch_dict['attention_mask'].to(device)
+            outputs = self.model.to(device)(**batch_dict)
+        embeddings = average_pool(outputs.last_hidden_state, batch_dict['attention_mask'])
+        return embeddings

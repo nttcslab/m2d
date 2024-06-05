@@ -87,6 +87,24 @@ def reformat_evar_ckpt(checkpoint):
     return new_ckpt
 
 
+def make_it_CLAP_if_needed(model, checkpoint):
+    # Return if already a CLAP model
+    if hasattr(model, 'audio_proj') or checkpoint is None: return
+    # Add projectors if needed
+    if 'audio_proj.0.weight' in checkpoint.keys():
+        proj_hidden_dim = embed_dim = checkpoint['audio_proj.0.weight'].shape[1]
+        model.audio_proj = torch.nn.Sequential(
+            torch.nn.Linear(embed_dim, proj_hidden_dim),
+            torch.nn.ReLU(),
+            torch.nn.Linear(proj_hidden_dim, embed_dim),
+        )
+        if 'text_proj.weight' in checkpoint.keys():
+            dim = checkpoint['text_proj.weight'].shape
+            model.text_proj = torch.nn.Linear(dim[1], dim[0])
+        else:
+            model.text_proj = torch.nn.Identity()
+
+
 def get_backbone(args, weight_file, encoder_only, dur_frames):
     # determine model parameters for creation
     try:
@@ -122,9 +140,12 @@ def get_backbone(args, weight_file, encoder_only, dur_frames):
     if args.model.startswith('m2d_x_vit') or args.model.startswith('m2d_as_vit'):
         off_emb_dim = 3840 if checkpoint is None else checkpoint['offline_predictor.weight'].shape[0]
         model_args['off_emb_dim'] = off_emb_dim
+    if args.model.startswith('m2d_clap_vit'):
+        model_args['off_emb_dim'] = 768  # so far we support GTE-base only
 
     logging.info(f'Creating model: {args.model}({model_args})')
     model = models_mae.__dict__[args.model](**model_args)
+    make_it_CLAP_if_needed(model, checkpoint)
 
     # load weights
     if checkpoint:
@@ -388,3 +409,66 @@ class RuntimeM2D(nn.Module):
         wav = librosa.feature.inverse.mel_to_audio(M, sr=sr, n_fft=n_fft, hop_length=hop_length, win_length=win_length)
         # display(Audio(wav, rate=sr))
         return wav
+
+    def encode_clap_audio(self, batch_audio):
+        audio_embeddings = self.forward(batch_audio)
+        audio_embeddings = audio_embeddings.mean(dim=-2)
+        audio_embeddings = self.backbone.audio_proj(audio_embeddings)
+        return audio_embeddings
+
+    def encode_clap_text(self, batch_text, truncate=False):
+        if not hasattr(self, 'text_encoder'):
+            self.text_encoder = GTETextEncoder()
+        text_embeddings = self.text_encoder(batch_text, truncate=truncate)
+        text_embeddings = self.backbone.text_proj(text_embeddings)
+        text_embeddings = text_embeddings.detach().cpu().to(torch.float)
+        return text_embeddings
+
+
+# For the CLAP models
+
+class GTETextEncoder:
+    def __init__(self, clip_weight="thenlper/gte-base"):
+        from transformers import AutoTokenizer, AutoModel
+        import os
+        os.environ["TOKENIZERS_PARALLELISM"] = "true"  # To suppress warnings.
+
+        self.tokenizer = AutoTokenizer.from_pretrained(clip_weight)
+        self.model = AutoModel.from_pretrained(clip_weight)
+
+    def __call__(self, texts, truncate=True, max_length=512):
+        def average_pool(last_hidden_states, attention_mask):
+            last_hidden = last_hidden_states.masked_fill(~attention_mask[..., None].bool(), 0.0)
+            return last_hidden.sum(dim=1) / attention_mask.sum(dim=1)[..., None]
+
+        with torch.no_grad():
+            device = next(self.model.parameters()).device
+            batch_dict = self.tokenizer(texts, max_length=max_length, padding=True, truncation=truncate, return_tensors='pt')
+            batch_dict['input_ids'] = batch_dict['input_ids'].to(device)
+            batch_dict['token_type_ids'] = batch_dict['token_type_ids'].to(device)
+            batch_dict['attention_mask'] = batch_dict['attention_mask'].to(device)
+            outputs = self.model.to(device)(**batch_dict)
+        embeddings = average_pool(outputs.last_hidden_state, batch_dict['attention_mask'])
+        return embeddings
+
+
+class CLIPLTextEncoder:
+    def __init__(self, clip_weight="ViT-L/14"):
+        import clip
+
+        device = 'cpu'  # "cuda" if torch.cuda.is_available() else "cpu"
+        self.clip = clip
+        self.model, _ = clip.load(clip_weight, device=device)
+
+    def __call__(self, texts, truncate=True, max_length=77):
+
+        with torch.no_grad():
+            device = next(self.model.parameters()).device
+            tokens = self.clip.tokenize(texts, context_length=max_length, truncate=True).to(device)
+            embeddings = self.model.to(device).encode_text(tokens)
+        return embeddings
+
+
+def get_text_encoder(weight):
+    # return CLIPLTextEncoder()
+    return GTETextEncoder()

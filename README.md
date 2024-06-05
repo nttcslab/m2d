@@ -71,6 +71,7 @@ print(clip_level.shape)  # torch.Size([3, 3840])
 
 - [👉 **Resources for M2D-X medical applications (ICBHI2017/SPRSound), further pre-training examples**](app/icbhi_sprs/README_ICBHI_SPRS.md).
 - [👉 **Resources for M2D medical application (CirCor DigiScope heart sound)**](app/circor/README.md).
+- [👉 **Resources for M2D-CLAP (General-purpose Audio-Language Representation)**](clap/README.md).
 - [👉 **Resources for M2D-AS (M2D-X specialized in AudioSet)**](audioset/README.md).
 - [👉 **Resources for M2D-S (M2D-X specialized in Speech)**](speech/README.md).
 - TBD Preparing one more thing.
@@ -98,6 +99,7 @@ The repository is based on the codes from [facebookresearch/mae](https://github.
     curl -o train_audio.py https://raw.githubusercontent.com/facebookresearch/mae/efb2a8062c206524e35e47d04501ed4f544c0ae8/main_pretrain.py
     curl -o speech/train_speech.py https://raw.githubusercontent.com/facebookresearch/mae/efb2a8062c206524e35e47d04501ed4f544c0ae8/main_pretrain.py
     curl -o audioset/train_as.py https://raw.githubusercontent.com/facebookresearch/mae/efb2a8062c206524e35e47d04501ed4f544c0ae8/main_pretrain.py
+    curl -o clap/train_clap.py https://raw.githubusercontent.com/facebookresearch/mae/efb2a8062c206524e35e47d04501ed4f544c0ae8/main_pretrain.py
     curl -o mae_train_audio.py https://raw.githubusercontent.com/facebookresearch/mae/efb2a8062c206524e35e47d04501ed4f544c0ae8/main_pretrain.py
     curl -o m2d/engine_pretrain_m2d.py https://raw.githubusercontent.com/facebookresearch/mae/efb2a8062c206524e35e47d04501ed4f544c0ae8/engine_pretrain.py
     curl -o m2d/models_mae.py https://raw.githubusercontent.com/facebookresearch/mae/efb2a8062c206524e35e47d04501ed4f544c0ae8/models_mae.py
@@ -265,6 +267,13 @@ If you find our M2D useful in your research, please consider citing our papers.
     pages   = {2391-2406},
     url     = {https://ieeexplore.ieee.org/document/10502167},
     doi     = {10.1109/TASLP.2024.3389636}}
+
+@article{niizumi2024m2d-clap,
+    title   = {{M2D-CLAP: Masked Modeling Duo Meets CLAP for Learning General-purpose Audio-Language Representation}},
+    author  = {Daisuke Niizumi and Daiki Takeuchi and Yasunori Ohishi and Noboru Harada and Masahiro Yasuda and Shunsuke Tsubaki and Keisuke Imoto},
+    journal = {to appear at Interspeech},
+    year    = {2024},
+    url     = {https://arxiv.org/abs/2406.02032}}
 
 @inproceedings{niizumi2023m2d,
     title   = {{Masked Modeling Duo: Learning Representations by Encouraging Both Networks to Model the Input}},

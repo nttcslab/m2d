@@ -14,7 +14,7 @@ for i in $(seq $n_iter); do
   for w in ${@:5}; do
     weight=$1/checkpoint-$w.pth
     seed=$((seed + 1))
-    cmdline="CUDA_VISIBLE_DEVICES=$gpu python circor_eval.py config/m2d.yaml circor$split weight_file=$weight,encoder_only=True,freeze_embed=True --lr=$lr_prm --freq_mask 0 --time_mask 0 --training_mask 0.2 --mixup 0.0 --rrc False --epochs 50 --warmup_epochs 5 --seed $seed --batch_size $bs"
+    cmdline="CUDA_VISIBLE_DEVICES=$gpu python circor_eval.py config/m2d.yaml circor$split weight_file=$weight,encoder_only=True,freeze_embed=True --lr=$lr_prm --freq_mask 0 --time_mask 0 --training_mask 0.0 --mixup 0.0 --rrc False --epochs 50 --warmup_epochs 5 --seed $seed --batch_size $bs"
     echo $cmdline
     eval $cmdline
   done
