@@ -12,9 +12,11 @@ This repository provides demo implementations of our paper "[Masked Modeling Duo
 
 | Weight        | Recommendation  | Description | Fur-PT Ready | AS2M mAP |
 |:--------------|:----------------|:------------|:------:|:--------:|
-| [m2d_as_vit_base-80x1001p16x16-240213_AS-FT_enconly](https://github.com/nttcslab/m2d/releases/download/v0.3.0/m2d_as_vit_base-80x1001p16x16-240213_AS-FT_enconly.zip) | Best for audio tagging (AT) / sound event detection (SED).| M2D-AS fine-tuned on AS2M | N/A | 0.485 |
-| [m2d_vit_base-80x1001p16x16-221006-mr7_as_46ab246d](https://github.com/nttcslab/m2d/releases/download/v0.3.0/m2d_vit_base-80x1001p16x16-221006-mr7_as_46ab246d.zip) | 2nd best for AT/SED. | M2D/0.7 fine-tuned on AS2M | N/A | 0.479 |
+| [m2d_clap_vit_base-80x1001p16x16-240128_AS-FT_enconly](https://github.com/nttcslab/m2d/releases/download/v0.3.0/m2d_clap_vit_base-80x1001p16x16-240128_AS-FT_enconly.zip) | Best for audio tagging (AT) / sound event detection (SED). (Encoder only) | M2D-CLAP fine-tuned on AS2M | N/A | 0.485 |
+| [m2d_as_vit_base-80x1001p16x16-240213_AS-FT_enconly](https://github.com/nttcslab/m2d/releases/download/v0.3.0/m2d_as_vit_base-80x1001p16x16-240213_AS-FT_enconly.zip) | 2nd best for AT/SED. (Encoder only) | M2D-AS fine-tuned on AS2M | N/A | 0.485 |
+| [m2d_vit_base-80x1001p16x16-221006-mr7_as_46ab246d](https://github.com/nttcslab/m2d/releases/download/v0.3.0/m2d_vit_base-80x1001p16x16-221006-mr7_as_46ab246d.zip) | 3rd best for AT/SED. (Encoder only) | M2D/0.7 fine-tuned on AS2M | N/A | 0.479 |
 | [m2d_vit_base-80x200p16x4-230529](https://github.com/nttcslab/m2d/releases/download/v0.1.0/m2d_vit_base-80x200p16x4-230529.zip) | General-purpose transfer learning and further pre-training w/ finer time frame. | M2D/0.7 (t.f. 40ms) | ✅ | - |
+| [m2d_clap_vit_base-80x608p16x16-240128](https://github.com/nttcslab/m2d/releases/download/v0.1.0/m2d_clap_vit_base-80x608p16x16-240128.zip) | General-purpose transfer learning and further pre-training, especially when application data is closer to the AudioSet ontology. | M2D-CLAP | ✅ | - |
 | [m2d_as_vit_base-80x608p16x16-240213](https://github.com/nttcslab/m2d/releases/download/v0.1.0/m2d_as_vit_base-80x608p16x16-240213.zip) | General-purpose transfer learning and further pre-training, especially when application data is closer to the AudioSet ontology. | M2D-AS | ✅ | - |
 | [m2d_vit_base-80x608p16x16-221006-mr7](https://github.com/nttcslab/m2d/releases/download/v0.1.0/m2d_vit_base-80x608p16x16-221006-mr7.zip) | General-purpose transfer learning and further pre-training. | M2D/0.7 | ✅ | - |
 | [m2d_vit_base-80x608p16x16-221006-mr6](https://github.com/nttcslab/m2d/releases/download/v0.1.0/m2d_vit_base-80x608p16x16-221006-mr6.zip) | General-purpose transfer learning and further pre-training. | M2D/0.6 | ✅ | - |
@@ -40,6 +42,7 @@ This repository provides demo implementations of our paper "[Masked Modeling Duo
 | Description | Notebook |
 |:------------|:---------|
 | Audio tagging example | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg) examples/Colab_M2D_example_Tagging.ipynb](http://colab.research.google.com/github/nttcslab/m2d/blob/master/examples/Colab_M2D_example_Tagging.ipynb) |
+| Zero-shot ESC-50 classification example | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg) examples/Colab_M2D-CLAP_ESC-50_ZS.ipynb](http://colab.research.google.com/github/nttcslab/m2d/blob/master/examples/Colab_M2D-CLAP_ESC-50_ZS.ipynb) |
 | Feature extraction example | (TBD) |
 
 You can use simple code to load an M2D model and encode your audio.
