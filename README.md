@@ -42,8 +42,8 @@ This repository provides demo implementations of our paper "[Masked Modeling Duo
 | Description | Notebook |
 |:------------|:---------|
 | Audio tagging example | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg) examples/Colab_M2D_example_Tagging.ipynb](http://colab.research.google.com/github/nttcslab/m2d/blob/master/examples/Colab_M2D_example_Tagging.ipynb) |
-| Zero-shot ESC-50 classification example | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg) examples/Colab_M2D-CLAP_ESC-50_ZS.ipynb](http://colab.research.google.com/github/nttcslab/m2d/blob/master/examples/Colab_M2D-CLAP_ESC-50_ZS.ipynb) |
-| Feature extraction example | (TBD) |
+| Zero-shot ESC-50 classification with M2D-CLAP | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg) examples/Colab_M2D-CLAP_ESC-50_ZS.ipynb](http://colab.research.google.com/github/nttcslab/m2d/blob/master/examples/Colab_M2D-CLAP_ESC-50_ZS.ipynb) |
+| Audio feature visualization example with M2D-CLAP | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg) examples/Colab_M2D-CLAP_ESC-50_VizualizeEmbs.ipynb](http://colab.research.google.com/github/nttcslab/m2d/blob/master/examples/Colab_M2D-CLAP_ESC-50_VizualizeEmbs.ipynb) |
 
 You can use simple code to load an M2D model and encode your audio.
 

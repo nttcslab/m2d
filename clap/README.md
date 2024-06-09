@@ -51,6 +51,21 @@ For the zero-shot evaluation, refer to the [../all_eval.sh](../all_eval.sh), whi
 
 Refer to the repository [ACalt4](https://github.com/KeisukeImoto/ACalt4) for the details.
 
+## Examples
+
+| Description | Notebook |
+|:------------|:---------|
+| Zero-shot ESC-50 classification with M2D-CLAP | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg) examples/Colab_M2D-CLAP_ESC-50_ZS.ipynb](http://colab.research.google.com/github/nttcslab/m2d/blob/master/examples/Colab_M2D-CLAP_ESC-50_ZS.ipynb) |
+| Audio feature visualization example with M2D-CLAP | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg) examples/Colab_M2D-CLAP_ESC-50_VizualizeEmbs.ipynb](http://colab.research.google.com/github/nttcslab/m2d/blob/master/examples/Colab_M2D-CLAP_ESC-50_VizualizeEmbs.ipynb) |
+
+### t-SNE visualization of ESC-10 samples
+
+The t-SNE visualization of the audio embeddings encoded by M2D-CLAP. The conventional audio embeddings are the output of the audio encoder for transfer learning. The CLAP audio embeddings are the output of the audio projector for ZS inference.
+
+<figure>
+  <img src="image-ESC10-Viz.jpg" alt="image-ESC10-Viz", width="50%">
+</figure>
+
 ## Results on the paper
 
 <figure>
