@@ -298,7 +298,7 @@ class RuntimeM2D(nn.Module):
         patch_frames = self.backbone.patch_size()[1]
         embed_d = self.backbone.patch_embed.proj.out_channels
         chunks = (x.shape[-1] + unit_frames - 1) // unit_frames
-        pad_frames = (patch_frames - x.shape[-1] % patch_frames) % patch_frames
+        pad_frames = (patch_frames - (x.shape[-1] % unit_frames % patch_frames)) % patch_frames
         if pad_frames > 0:
             x = torch.nn.functional.pad(x, (0, pad_frames))
 
